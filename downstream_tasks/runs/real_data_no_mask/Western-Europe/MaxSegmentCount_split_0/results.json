@@ -1,0 +1,1 @@
+{"f1_macro": 0.9164971864679303, "f1_weighted": 0.9456931538134251, "accuracy": 0.9482517482517483, "class_scores": {"English": 0.9682875264270613, "Germans": 0.9276595744680851, "French": 0.8141592920353983, "Belgium": 0.9558823529411765}, "skipped_nodes": 54, "model_name": "MaxSegmentCount"}

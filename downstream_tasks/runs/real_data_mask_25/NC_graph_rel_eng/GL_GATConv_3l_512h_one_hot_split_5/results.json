@@ -1,0 +1,1 @@
+{"f1_macro": 0.24292374292374294, "f1_weighted": 0.4020489314606962, "accuracy": 0.5, "class_scores": {"Chechens": 0.6666666666666666, "Kabardians, Circassians, Adyghes": 0.5494505494505495, "Karachays, Balkars": 0.0, "Ingush": 0.0, "Dagestan peoples": 0.7272727272727273, "Ossetians": 0.0, "Kumyks": 0.0, "Nogais": 0.0}, "skipped_nodes": 16, "model_name": "GL_GATConv_3l_512h"}

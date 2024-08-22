@@ -1,0 +1,1 @@
+{"f1_macro": 0.8727068336616651, "f1_weighted": 0.9359322260160453, "accuracy": 0.9388083735909822, "class_scores": {"English": 0.9740698985343855, "Germans": 0.8441558441558441, "French": 0.7532467532467533, "Belgium": 0.9193548387096774}, "skipped_nodes": 148, "model_name": "GL_TAGConv_9l_128h_w_k3"}

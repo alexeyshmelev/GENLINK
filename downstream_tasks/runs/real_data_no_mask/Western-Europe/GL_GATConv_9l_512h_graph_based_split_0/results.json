@@ -1,0 +1,1 @@
+{"f1_macro": 0.9281796786658574, "f1_weighted": 0.9538345676676856, "accuracy": 0.9552447552447553, "class_scores": {"English": 0.9733759318423855, "Germans": 0.9401709401709402, "French": 0.8571428571428571, "Belgium": 0.9420289855072463}, "skipped_nodes": 54, "model_name": "GL_GATConv_9l_512h"}

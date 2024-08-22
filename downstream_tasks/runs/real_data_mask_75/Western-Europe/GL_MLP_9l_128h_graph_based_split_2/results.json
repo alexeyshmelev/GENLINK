@@ -1,0 +1,1 @@
+{"f1_macro": 0.7302998615102947, "f1_weighted": 0.8289519847441195, "accuracy": 0.8215827338129497, "class_scores": {"English": 0.9117983963344788, "Germans": 0.6524390243902439, "French": 0.5569620253164557, "Belgium": 0.8}, "skipped_nodes": 74, "model_name": "GL_MLP_9l_128h"}

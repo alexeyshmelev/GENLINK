@@ -1,0 +1,5 @@
+{
+    "gnn":{"GL_MLP_3l_128h":["graph_based"]},
+    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "community_detection":[]
+}

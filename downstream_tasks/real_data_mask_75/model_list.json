@@ -1,0 +1,5 @@
+{
+    "gnn":{},
+    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "community_detection":[]
+}

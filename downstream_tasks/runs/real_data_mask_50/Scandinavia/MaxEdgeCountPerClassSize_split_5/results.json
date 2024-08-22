@@ -1,0 +1,1 @@
+{"f1_macro": 0.913029308763906, "f1_weighted": 0.9296315868275191, "accuracy": 0.9296482412060302, "class_scores": {"Swedes": 0.9370629370629371, "Norwegians": 0.9383886255924171, "Danes": 0.8636363636363636}, "skipped_nodes": 16, "model_name": "MaxEdgeCountPerClassSize"}

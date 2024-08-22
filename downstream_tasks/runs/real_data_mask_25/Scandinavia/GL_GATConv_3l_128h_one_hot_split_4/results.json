@@ -1,0 +1,1 @@
+{"f1_macro": 0.5623002139568684, "f1_weighted": 0.7084180185011877, "accuracy": 0.7644230769230769, "class_scores": {"Swedes": 0.7746478873239436, "Norwegians": 0.8477366255144033, "Danes": 0.06451612903225806}, "skipped_nodes": 7, "model_name": "GL_GATConv_3l_128h"}
