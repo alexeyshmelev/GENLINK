@@ -80,7 +80,8 @@ class Runner:
                                                                 test_dataset_type='multiple', 
                                                                 dataset_name=path.split('/')[-1], 
                                                                 masking=masking,
-                                                                no_mask_class_in_df=True)
+                                                                no_mask_class_in_df=True,
+                                                                log_edge_weights=self.running_params['log_ibd'])
             elif feature_type=='graph_based':
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                 model_type='homogeneous', 
@@ -88,7 +89,8 @@ class Runner:
                                                                 test_dataset_type='multiple', 
                                                                 dataset_name=path.split('/')[-1], 
                                                                 masking=masking,
-                                                                no_mask_class_in_df=True)
+                                                                no_mask_class_in_df=True,
+                                                                log_edge_weights=self.running_params['log_ibd'])
             # print('OKOKKKKOKOKOKOKOKOKOKOKO', dataset)
             # select parameters for grid search
             curr_params = dict()
@@ -108,7 +110,7 @@ class Runner:
             print(f'Here will be {len(curr_params_grid)} runs for model {model}')
 
             for curr_param in curr_params_grid:
-                log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + '/' + model + '_' + feature_type + '_' + f'split_{split_id}'
+                log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type + '_' + f'split_{split_id}'
                 trainer = Trainer(data=dataset,
                                 model_cls=getattr(models, model), 
                                 lr=curr_param['lr'], 

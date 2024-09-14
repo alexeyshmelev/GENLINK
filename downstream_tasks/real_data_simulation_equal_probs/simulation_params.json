@@ -1,0 +1,5 @@
+{
+    "type": "equal_probs",
+    "prob_boost": [0.0],
+    "equal_edge_prob_value": 0.02
+}

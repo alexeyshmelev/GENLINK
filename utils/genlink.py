@@ -937,7 +937,7 @@ class DataProcessor:
     
     @staticmethod
     @njit(cache=True, parallel=True)
-    def make_graph_based_features(df, hashmap, specific_nodes, num_classes, num_nodes):
+    def make_graph_based_features(df, hashmap, specific_nodes, num_classes, num_nodes, log_edge_weights):
         
         features_num_edges = np.zeros((num_nodes, num_classes))
         features_ibd_tmp = np.zeros((num_nodes, num_nodes, num_classes))
@@ -947,17 +947,17 @@ class DataProcessor:
             row = df[i]
             if int(row[0]) in specific_nodes and int(row[1]) not in specific_nodes: # check dulicated rows in initial df
                 features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
-                features_ibd_tmp[hashmap[int(row[0])], hashmap[int(row[1])], int(row[3])] += row[4]
+                features_ibd_tmp[hashmap[int(row[0])], hashmap[int(row[1])], int(row[3])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
             elif int(row[1]) in specific_nodes and int(row[0]) not in specific_nodes:
                 features_num_edges[hashmap[int(row[1])], int(row[2])] += 1
-                features_ibd_tmp[hashmap[int(row[1])], hashmap[int(row[0])], int(row[2])] += row[4]
+                features_ibd_tmp[hashmap[int(row[1])], hashmap[int(row[0])], int(row[2])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
             elif int(row[1]) in specific_nodes and int(row[0]) in specific_nodes:
                 continue
             else:
                 features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
                 features_num_edges[hashmap[int(row[1])], int(row[2])] += 1
-                features_ibd_tmp[hashmap[int(row[0])], hashmap[int(row[1])], int(row[3])] += row[4]
-                features_ibd_tmp[hashmap[int(row[1])], hashmap[int(row[0])], int(row[2])] += row[4]
+                features_ibd_tmp[hashmap[int(row[0])], hashmap[int(row[1])], int(row[3])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
+                features_ibd_tmp[hashmap[int(row[1])], hashmap[int(row[0])], int(row[2])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
                 
         for i in prange(num_nodes): # enhance speed in future by using part of training features for test and validation features
             for j in range(num_classes):
@@ -1055,10 +1055,10 @@ class DataProcessor:
             assert np.sum(np.array(features).sum(axis=1) == 0) == 0
         elif feature_type == 'graph_based':
             if masking:
-                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node] + self.mask_nodes), len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes))
+                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node] + self.mask_nodes), len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
                 # node_mask = self.get_mask(curr_nodes, self.mask_nodes)
             else:
-                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node]), len(self.classes), len(curr_nodes))
+                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node]), len(self.classes), len(curr_nodes), log_edge_weights)
         else:
             raise Exception('Such feature type is not known!')
         targets = self.construct_node_classes(curr_nodes, dict_node_classes, self.mask_nodes)
@@ -1079,7 +1079,7 @@ class DataProcessor:
             
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
-             'weight': -torch.log(torch.tensor(weighted_edges[:, 2]) / 6600) if log_edge_weights else torch.tensor(weighted_edges[:, 2]), # try 1) log(IBD/8 * e) 2) 1 / T
+             'weight': -torch.log2(torch.tensor(weighted_edges[:, 2]) / 6600) if log_edge_weights else torch.tensor(weighted_edges[:, 2]), # try 1) log(IBD/8 * e) 2) 1 / T
              'edge_index': torch.tensor(weighted_edges[:, :2].T, dtype=torch.long),
              'mask': torch.tensor(node_mask)})
 

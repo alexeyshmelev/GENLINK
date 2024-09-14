@@ -1,0 +1,1 @@
+{"f1_macro": 0.9471349004059285, "f1_weighted": 0.9612310894206133, "accuracy": 0.9627906976744186, "class_scores": {"P0": 1.0, "P1": 0.9626168224299065, "P2": 0.8787878787878788}, "skipped_nodes": 0, "model_name": "MaxSegmentCount"}

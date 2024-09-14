@@ -1,0 +1,1 @@
+{"f1_macro": 0.13393916913946588, "f1_weighted": 0.283991735085835, "accuracy": 0.254601226993865, "class_scores": {"P0": 0.15, "P1": 0.3857566765578635, "P2": 0.0, "P3": 0.0}, "skipped_nodes": 0, "model_name": "LongestIbd"}

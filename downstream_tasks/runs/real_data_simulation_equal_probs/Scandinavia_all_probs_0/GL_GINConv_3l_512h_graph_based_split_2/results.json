@@ -1,0 +1,1 @@
+{"f1_macro": 0.3221070811744387, "f1_weighted": 0.4022050849499939, "accuracy": 0.4372093023255814, "class_scores": {"P0": 0.46632124352331605, "P1": 0.5, "P2": 0.0}, "skipped_nodes": 0, "model_name": "GL_GINConv_3l_512h"}

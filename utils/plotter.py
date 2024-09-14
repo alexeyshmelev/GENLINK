@@ -8,9 +8,11 @@ import numpy as np
 from os import listdir
 from os.path import isdir, join
 
-def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_percent=None, sort_bars=False, annotate=False):   
+def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None):   
 
     all_dataset_dirs = [f for f in listdir(data_path) if isdir(join(data_path, f))]
+    if dataset_plot_only is not None:
+        all_dataset_dirs = (np.array(all_dataset_dirs)[np.array(all_dataset_dirs) == dataset_plot_only]).tolist()
     for dataset_dir in all_dataset_dirs:
         all_models_per_dataset_path = join(data_path, dataset_dir)
     
@@ -29,9 +31,15 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
                     ft = ''
                 if tuple([curr_res['model_name'], ft]) not in results.keys():
                     results[tuple([curr_res['model_name'], ft])] = []
-                    results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                    if class_plot_only is None:
+                        results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                    else:
+                        results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
                 else:
-                    results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                    if class_plot_only is None:
+                        results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                    else:
+                        results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
 
         # print(results)
 
@@ -105,14 +113,21 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
                 
         
         for k, v in color_model_scheme.items():
-            plt.scatter([],[], c=v, label=k)
+            if k != 'Community detection':
+                plt.scatter([],[], c=v, label=k)
 
-        plt.title(f'Model performance for {dataset_dir}')
+        if class_plot_only is None:
+            plt.title(f'Model performance for {dataset_dir}')
+        else:
+            plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})')
         plt.xlabel('Model')
         plt.ylabel('Mean f1-macro score')
         plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center')  # Rotate x-axis labels for better readability
         plt.legend()
         plt.tight_layout()  # Adjust the layout to make room for the rotated labels
         if fig_path is not None:
-            plt.savefig(f'{fig_path}/{dataset_dir}_mask_percent_{mask_percent}.pdf', bbox_inches="tight")
+            if class_plot_only is None:
+                plt.savefig(f'{fig_path}/{dataset_dir}_mask_percent_{mask_percent}.pdf', bbox_inches="tight")
+            else:
+                plt.savefig(f'{fig_path}/{dataset_dir}_mask_percent_{mask_percent}_{class_plot_only}.pdf', bbox_inches="tight")
         plt.show()

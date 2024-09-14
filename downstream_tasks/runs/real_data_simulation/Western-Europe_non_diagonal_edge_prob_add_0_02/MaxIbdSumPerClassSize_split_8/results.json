@@ -1,0 +1,1 @@
+{"f1_macro": 0.06303724928366762, "f1_weighted": 0.022624552408702554, "accuracy": 0.05721716514954486, "class_scores": {"P0": 0.0, "P1": 0.0, "P2": 0.0, "P3": 0.2521489971346705}, "skipped_nodes": 0, "model_name": "MaxIbdSumPerClassSize"}

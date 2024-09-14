@@ -1,0 +1,1 @@
+{"f1_macro": 0.8338789130780233, "f1_weighted": 0.8708014442034154, "accuracy": 0.8790697674418605, "class_scores": {"P0": 0.8903225806451613, "P1": 0.9216589861751152, "P2": 0.6896551724137931}, "skipped_nodes": 0, "model_name": "MaxEdgeCountPerClassSize"}

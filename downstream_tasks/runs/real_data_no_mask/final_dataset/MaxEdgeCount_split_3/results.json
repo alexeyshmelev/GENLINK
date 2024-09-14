@@ -1,0 +1,1 @@
+{"f1_macro": 0.42731326244047024, "f1_weighted": 0.46668317090329925, "accuracy": 0.4930555555555556, "class_scores": {"krasnodar": 0.543859649122807, "yaroslavl": 0.3148148148148148, "ryazan": 0.5677966101694916, "kaluga": 0.272, "vologda": 0.4380952380952381}, "skipped_nodes": 0, "model_name": "MaxEdgeCount"}
