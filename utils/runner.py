@@ -2,6 +2,7 @@ from genlink import DataProcessor, NullSimulator, Trainer, BaselineMethods, Heur
 from multiprocessing import Manager, Array, current_process, get_context, Process, Lock
 from tqdm import tqdm
 import torch
+import networkx as nx
 from sklearn.model_selection import ParameterGrid
 import numpy as np
 import models
@@ -199,8 +200,14 @@ class Runner:
             for path in self.data_files:
                 for heuristic in tqdm(self.heuristic_models, desc=f"Running heuristics for {path.split('/')[-1]}"): # make tqdm to show progress bar for everything at once
                     for s in range(self.running_params['num_splits']):
-                        log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + '/' + heuristic + '_' + f'split_{s}'
-                        dataset = self.datasets[path.split('/')[-1].split('.')[0]][s]
+                        log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + ('_log' if self.running_params['log_ibd'] else '') + '/' + heuristic + '_' + f'split_{s}'
+                        if self.running_params['log_ibd']:
+                            dataset = copy.deepcopy(self.datasets[path.split('/')[-1].split('.')[0]][s])
+                            # edge_weights = nx.get_edge_attributes(dataset.nx_graph, 'ibd_sum')
+                            for edge in dataset.nx_graph.edges:
+                                dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] = -np.log2(dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] / 6600)
+                        else:
+                            dataset = copy.deepcopy(self.datasets[path.split('/')[-1].split('.')[0]][s])
                         h = Heuristics(dataset)
                         results = h.run_heuristic(heuristic)
                         if not os.path.isdir(log_dir):

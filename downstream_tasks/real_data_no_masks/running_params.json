@@ -21,5 +21,6 @@
     "masking":null,
     "disable_printing":true,
     "seed":42,
-    "correct_and_smooth":null
+    "correct_and_smooth":null,
+    "log_ibd":false
 }
