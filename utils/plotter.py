@@ -79,7 +79,7 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
         # print(df)
 
         # Plotting
-        plt.figure(figsize=(14, 6))
+        plt.figure(figsize=(16, 6))
         # sns.set(style="whitegrid")
         sns.set_theme()
         
