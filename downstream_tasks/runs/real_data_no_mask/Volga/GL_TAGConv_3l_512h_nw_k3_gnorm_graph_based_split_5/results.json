@@ -1,0 +1,1 @@
+{"f1_macro": 0.9761200272335797, "f1_weighted": 0.9938244965597751, "accuracy": 0.9938650306748467, "class_scores": {"Udmurts,Besermyan": 0.972972972972973, "Tatars,Volga-Tatars,Mishar-Tatars,Kryashens": 0.9978494623655914, "Chuvash": 0.9924812030075187, "Mari": 0.9411764705882353}, "skipped_nodes": 0, "model_name": "GL_TAGConv_3l_512h_nw_k3_gnorm"}
