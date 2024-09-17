@@ -203,7 +203,7 @@ class GL_TAGConv_3l_512h_w_k3_gnorm_leaky_relu(torch.nn.Module):
 
 class GL_TAGConv_3l_512h_w_k3_gnorm_relu(torch.nn.Module):
     def __init__(self, data):
-        super(GL_TAGConv_3l_512h_w_k3_gnorm_leaky_relu, self).__init__()
+        super(GL_TAGConv_3l_512h_w_k3_gnorm_relu, self).__init__()
         self.conv1 = TAGConv(int(data.num_features), 512)
         self.conv2 = TAGConv(512, 512)
         self.conv3 = TAGConv(512, int(data.num_classes))
