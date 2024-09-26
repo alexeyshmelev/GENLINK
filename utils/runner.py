@@ -53,11 +53,11 @@ class Runner:
 
             feature_type = curr_exp[0]
             model = curr_exp[1]
-            path = curr_exp[2]
+            dataset_name = curr_exp[2]
             split_id = curr_exp[3]
             # print(feature_type, model, path, split_id)
 
-            dataset = copy.deepcopy(self.datasets[path.split('/')[-1].split('.')[0]][split_id])
+            dataset = copy.deepcopy(self.datasets[dataset_name][split_id])
             # dataset = DataProcessor(path)
             # dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 
             #                                                 valid_size=self.running_params['valid_size'], 
@@ -78,8 +78,7 @@ class Runner:
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                 model_type='homogeneous', 
                                                                 train_dataset_type='multiple', 
-                                                                test_dataset_type='multiple', 
-                                                                dataset_name=path.split('/')[-1], 
+                                                                test_dataset_type='multiple',
                                                                 masking=masking,
                                                                 no_mask_class_in_df=True,
                                                                 log_edge_weights=self.running_params['log_ibd'])
@@ -87,8 +86,7 @@ class Runner:
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                 model_type='homogeneous', 
                                                                 train_dataset_type='one', 
-                                                                test_dataset_type='multiple', 
-                                                                dataset_name=path.split('/')[-1], 
+                                                                test_dataset_type='multiple',
                                                                 masking=masking,
                                                                 no_mask_class_in_df=True,
                                                                 log_edge_weights=self.running_params['log_ibd'])
@@ -111,7 +109,7 @@ class Runner:
             print(f'Here will be {len(curr_params_grid)} runs for model {model}')
 
             for curr_param in curr_params_grid:
-                log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type + '_' + f'split_{split_id}'
+                log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type + '_' + f'split_{split_id}'
                 trainer = Trainer(data=dataset,
                                 model_cls=getattr(models, model), 
                                 lr=curr_param['lr'], 
@@ -132,7 +130,8 @@ class Runner:
                                 save_model_in_ram=False, 
                                 correct_and_smooth=self.running_params['correct_and_smooth'], 
                                 no_mask_class_in_df=True,
-                                remove_saved_model_after_testing=True)
+                                remove_saved_model_after_testing=True,
+                                plot_cm=self.running_params['plot_cm'])
                 results = trainer.run()
 
                 if results['f1_macro'] >= max_f1_macro_score:
@@ -155,27 +154,35 @@ class Runner:
 
         # generating splits for all models to avoid problems with seed
         for path in self.data_files:
-            self.datasets[path.split('/')[-1].split('.')[0]] = dict()
-            for s in range(self.running_params['num_splits']):
-                dataset = DataProcessor(path)
-                dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 
-                                                               valid_size=self.running_params['valid_size'], 
-                                                               test_size=self.running_params['test_size'], 
-                                                               random_state=self.running_params['seed'] + s,
-                                                               save_dir=self.running_params['splits_save_dir'], 
-                                                               mask_size=self.running_params['mask_size'],
-                                                               sub_train_size=self.running_params['sub_train_size'], 
-                                                               keep_train_nodes=self.running_params['keep_train_nodes'], 
-                                                               mask_random_state=self.running_params['mask_random_state'])
-                self.datasets[path.split('/')[-1].split('.')[0]][s] = dataset
+            if self.running_params['sub_train_size'] is None:
+                stss = [None]
+            else:
+                stss = self.running_params['sub_train_size']
+            for sts in stss:
+                dataset_name = path.split('/')[-1].split('.')[0]
+                if len(stss) > 1:
+                    dataset_name += f'_sts_{sts}'
+                self.datasets[dataset_name] = dict()
+                for s in range(self.running_params['num_splits']):
+                    dataset = DataProcessor(path, dataset_name=dataset_name)
+                    dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 
+                                                                valid_size=self.running_params['valid_size'], 
+                                                                test_size=self.running_params['test_size'], 
+                                                                random_state=self.running_params['seed'] + s,
+                                                                save_dir=self.running_params['splits_save_dir'], 
+                                                                mask_size=self.running_params['mask_size'],
+                                                                sub_train_size=sts, 
+                                                                keep_train_nodes=self.running_params['keep_train_nodes'], 
+                                                                mask_random_state=self.running_params['mask_random_state'])
+                    self.datasets[dataset_name][s] = dataset
 
         if len(self.gnn_models):
             explist = []
             for tuple_hash, feature_type in self.gnn_models.items():
                 gnn_model_name, _ = tuple_hash
-                for path in self.data_files:
+                for dataset_name in self.datasets.keys():
                     for s in range(self.running_params['num_splits']):
-                        explist.append([feature_type, gnn_model_name, path, s])
+                        explist.append([feature_type, gnn_model_name, dataset_name, s])
 
             # if len(self.gnn_models):
                 # with get_context("spawn").Pool(len(self.device) * self.models_per_gpu) as p:
@@ -197,17 +204,17 @@ class Runner:
 
         
         if len(self.heuristic_models):
-            for path in self.data_files:
-                for heuristic in tqdm(self.heuristic_models, desc=f"Running heuristics for {path.split('/')[-1]}"): # make tqdm to show progress bar for everything at once
+            for dataset_name in self.datasets.keys():
+                for heuristic in tqdm(self.heuristic_models, desc=f"Running heuristics for {dataset_name}"): # make tqdm to show progress bar for everything at once
                     for s in range(self.running_params['num_splits']):
-                        log_dir = self.running_params['log_dir'] + '/' + path.split('/')[-1].split('.')[0] + ('_log' if self.running_params['log_ibd'] else '') + '/' + heuristic + '_' + f'split_{s}'
+                        log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + heuristic + '_' + f'split_{s}'
                         if self.running_params['log_ibd']:
-                            dataset = copy.deepcopy(self.datasets[path.split('/')[-1].split('.')[0]][s])
+                            dataset = copy.deepcopy(self.datasets[dataset_name][s])
                             # edge_weights = nx.get_edge_attributes(dataset.nx_graph, 'ibd_sum')
                             for edge in dataset.nx_graph.edges:
                                 dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] = -np.log2(dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] / 6600)
                         else:
-                            dataset = copy.deepcopy(self.datasets[path.split('/')[-1].split('.')[0]][s])
+                            dataset = copy.deepcopy(self.datasets[dataset_name][s])
                         h = Heuristics(dataset)
                         results = h.run_heuristic(heuristic)
                         if not os.path.isdir(log_dir):

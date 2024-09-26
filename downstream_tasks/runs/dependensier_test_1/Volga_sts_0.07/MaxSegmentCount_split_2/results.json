@@ -1,0 +1,1 @@
+{"f1_macro": 0.8229820485648816, "f1_weighted": 0.9309114573628529, "accuracy": 0.9318885448916409, "class_scores": {"Udmurts,Besermyan": 1.0, "Tatars,Volga-Tatars,Mishar-Tatars,Kryashens": 0.9619686800894854, "Chuvash": 0.868421052631579, "Mari": 0.46153846153846156}, "skipped_nodes": 3, "model_name": "MaxSegmentCount"}

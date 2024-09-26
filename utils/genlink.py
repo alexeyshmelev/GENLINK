@@ -172,8 +172,8 @@ def simulate_graph_fn(classes, means, counts, pop_index, path):
 
 
 class DataProcessor:
-    def __init__(self, path, is_path_object=False, disable_printing=True):
-        self.dataset_name: str = None
+    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None):
+        self.dataset_name: str = dataset_name
         self.train_size: float = None
         self.valid_size: float = None
         self.test_size: float = None
@@ -181,7 +181,7 @@ class DataProcessor:
         self.sub_train_size: float = None
         self.edge_probs = None
         self.mean_weight = None
-        self.offset = 8.0
+        self.offset = 6.0
         self.df = path if is_path_object else pd.read_csv(path)
         self.node_names_to_int_mapping: dict[str, int] = self.get_node_names_to_int_mapping(self.get_unique_nodes(self.df))
         self.classes: list[str] = self.get_classes(self.df)
@@ -314,9 +314,12 @@ class DataProcessor:
             node_counter_mask = {i: 0 for i in range(num_nodes_per_class_mask.shape[0])}
             for i in range(node_classes_masks_random.shape[0]):
                 node_class = node_classes_masks_random.iloc[i, 1]
-                if node_counter_mask[node_class] <= int(self.mask_size * num_nodes_per_class_mask.loc[node_class]):
+                if node_counter_mask[node_class] < int(self.mask_size * num_nodes_per_class_mask.loc[node_class]):
                     self.mask_nodes.append(node_classes_masks_random.iloc[i, 0])
                 node_counter_mask[node_class] += 1
+
+            if self.mask_size == 0:
+                assert len(self.mask_nodes) == 0
 
         if mask_size is not None:
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0]}% of all nodes in dataset were used')
@@ -1091,9 +1094,7 @@ class DataProcessor:
 
         return graph
 
-    def make_train_valid_test_datasets_with_numba(self, feature_type, model_type, train_dataset_type, test_dataset_type, dataset_name, log_edge_weights=False, skip_train_val=False, masking=False, no_mask_class_in_df=True):
-
-        self.dataset_name = dataset_name
+    def make_train_valid_test_datasets_with_numba(self, feature_type, model_type, train_dataset_type, test_dataset_type, log_edge_weights=False, skip_train_val=False, masking=False, no_mask_class_in_df=True):
 
         self.array_of_graphs_for_training = []
         self.array_of_graphs_for_testing = []
@@ -1297,7 +1298,7 @@ class DataProcessor:
 
                 self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean() - self.offset
                 if np.isnan(self.mean_weight[i, j]):
-                    self.mean_weight[i, j] = -self.offset
+                    self.mean_weight[i, j] = -self.offset #################### can be improved
 
                 if i == j:
                     all_possible_connections = num_nodes * (num_nodes - 1) / 2
@@ -1316,9 +1317,24 @@ class DataProcessor:
                 
                 
     def plot_simulated_probs(self, save_path=None, dataset_name=None):
-        fig, ax = plt.subplots(figsize=(10, 10))
+        fig, ax = plt.subplots(figsize=(6, 6))
         sns.heatmap(self.edge_probs, xticklabels=self.classes, yticklabels=self.classes, annot=True, fmt='.4f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
         ax.set_title(f'Edge probabilities ({dataset_name})', loc='center') # fontweight='bold'
+        for i, tick_label in enumerate(ax.axes.get_yticklabels()):
+            # tick_label.set_color("#008668")
+            tick_label.set_fontsize("10")
+        for i, tick_label in enumerate(ax.axes.get_xticklabels()):
+            # tick_label.set_color("#008668")
+            tick_label.set_fontsize("10")
+        if save_path is not None:
+            plt.savefig(save_path)
+        plt.show()
+
+
+    def plot_simulated_weights(self, save_path=None, dataset_name=None):
+        fig, ax = plt.subplots(figsize=(6, 6))
+        sns.heatmap(self.mean_weight, xticklabels=self.classes, yticklabels=self.classes, annot=True, fmt='.4f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+        ax.set_title(f'Mean edge weights ({dataset_name})', loc='center') # fontweight='bold'
         for i, tick_label in enumerate(ax.axes.get_yticklabels()):
             # tick_label.set_color("#008668")
             tick_label.set_fontsize("10")
@@ -1621,6 +1637,7 @@ class NullSimulator:
         '''
         p = self.edge_probs
         teta = self.mean_weight
+        # print(teta)
         pop_index = []
         n_pops = len(population_sizes)
         for i in range(n_pops):
@@ -1663,6 +1680,8 @@ class NullSimulator:
         
         full_blocks_counts = np.block(blocks_counts)
         full_blocks_sums = np.block(blocks_sums)
+        # print(np.unique(full_blocks_sums))
+        # print(np.unique(np.nan_to_num(symmetrize(full_blocks_sums))))
         return np.nan_to_num(symmetrize(full_blocks_counts)), np.nan_to_num(symmetrize(full_blocks_sums)), pop_index
 
 
@@ -1753,7 +1772,7 @@ class NullSimulator:
 
 
 class Trainer:
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False):
         self.data = data
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
@@ -1781,6 +1800,7 @@ class Trainer:
         self.save_model_in_ram = save_model_in_ram
         self.correct_and_smooth = correct_and_smooth
         self.remove_saved_model_after_testing = remove_saved_model_after_testing
+        self.plot_cm = plot_cm
             
         self.post = CorrectAndSmooth(num_correction_layers=2, correction_alpha=0.9,
                         num_smoothing_layers=1, smoothing_alpha=0.0001,
@@ -1873,7 +1893,7 @@ class Trainer:
             if not self.disable_printing:
                 print(f'Metric was not improved for the {self.patience_counter}th time')
 
-    def test(self, plot_cm=False, mask=False):
+    def test(self, mask=False):
         self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device)
         self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
         self.model.eval()
@@ -1903,13 +1923,24 @@ class Trainer:
                     print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
                 f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        cm = confusion_matrix(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred, normalize='true')
 
-        if plot_cm:
-            plt.clf()
-            fig, ax = plt.subplots(1, 1)
-            sns.heatmap(cm, annot=True, fmt=".2f", ax=ax)
-            plt.show()
+        if self.plot_cm:
+            fig, ax = plt.subplots(figsize=(10, 10))
+            sns.heatmap(cm, xticklabels=self.data.classes, yticklabels=self.data.classes, annot=True, fmt='.2f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+            ax.set_title(f'Confusion matrix for {self.data.dataset_name}', loc='center')
+            for i, tick_label in enumerate(ax.axes.get_yticklabels()):
+                # tick_label.set_color("#008668")
+                tick_label.set_fontsize("10")
+            for i, tick_label in enumerate(ax.axes.get_xticklabels()):
+                # tick_label.set_color("#008668")
+                tick_label.set_fontsize("10")
+            plt.tight_layout()
+            plt.savefig(self.log_dir + '/cm_on_test_data.png')
+            # plt.clf()
+            # fig, ax = plt.subplots(1, 1)
+            # sns.heatmap(cm, annot=True, fmt=".2f", ax=ax)
+            # plt.show()
 
         if self.remove_saved_model_after_testing:
             os.remove(self.log_dir + '/model_best.bin')

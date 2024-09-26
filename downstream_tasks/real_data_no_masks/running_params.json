@@ -2,7 +2,7 @@
     "train_size":0.6,
     "valid_size":0.2, 
     "test_size":0.2,
-    "num_splits":10,
+    "num_splits":1,
     "splits_save_dir": null, 
     "mask_size": null,
     "sub_train_size": null, 
@@ -22,5 +22,6 @@
     "disable_printing":true,
     "seed":42,
     "correct_and_smooth":null,
-    "log_ibd":false
+    "log_ibd":false,
+    "plot_cm":true
 }

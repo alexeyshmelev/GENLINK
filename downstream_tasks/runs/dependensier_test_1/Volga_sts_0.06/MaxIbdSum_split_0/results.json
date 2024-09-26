@@ -1,0 +1,1 @@
+{"f1_macro": 0.7225459225459225, "f1_weighted": 0.8901275301275301, "accuracy": 0.8923076923076924, "class_scores": {"Udmurts,Besermyan": 0.9714285714285714, "Tatars,Volga-Tatars,Mishar-Tatars,Kryashens": 0.9369369369369369, "Chuvash": 0.8, "Mari": 0.18181818181818182}, "skipped_nodes": 1, "model_name": "MaxIbdSum"}

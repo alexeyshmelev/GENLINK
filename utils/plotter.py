@@ -8,7 +8,7 @@ import numpy as np
 from os import listdir
 from os.path import isdir, join
 
-def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None):   
+def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None, highlight_best=False):   
 
     all_dataset_dirs = [f for f in listdir(data_path) if isdir(join(data_path, f))]
     if dataset_plot_only is not None:
@@ -21,25 +21,26 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
 
         results = dict()
         for dir_path in all_dirs:
-            with open(join(all_models_per_dataset_path, dir_path+'/results.json'), 'r') as f:
-                curr_res = json.load(f)
-                if 'graph_based' in dir_path:
-                    ft = 'graph_based'
-                elif 'one_hot' in dir_path:
-                    ft = 'one_hot'
-                else:
-                    ft = ''
-                if tuple([curr_res['model_name'], ft]) not in results.keys():
-                    results[tuple([curr_res['model_name'], ft])] = []
-                    if class_plot_only is None:
-                        results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+            if 'relu' not in dir_path and 'gelu' not in dir_path and 'leaky_relu' not in dir_path and 'nw' not in dir_path:
+                with open(join(all_models_per_dataset_path, dir_path+'/results.json'), 'r') as f:
+                    curr_res = json.load(f)
+                    if 'graph_based' in dir_path:
+                        ft = 'graph_based'
+                    elif 'one_hot' in dir_path:
+                        ft = 'one_hot'
                     else:
-                        results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
-                else:
-                    if class_plot_only is None:
-                        results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                        ft = ''
+                    if tuple([curr_res['model_name'], ft]) not in results.keys():
+                        results[tuple([curr_res['model_name'], ft])] = []
+                        if class_plot_only is None:
+                            results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                        else:
+                            results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
                     else:
-                        results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
+                        if class_plot_only is None:
+                            results[tuple([curr_res['model_name'], ft])].append(curr_res['f1_macro'])
+                        else:
+                            results[tuple([curr_res['model_name'], ft])].append(curr_res['class_scores'][class_plot_only])
 
         # print(results)
 
@@ -65,7 +66,7 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
         print('classifiers', len(classifier_names), len(means))
         df = pd.DataFrame({
             'Classifier': classifier_names,
-            'Mean': means,
+            'Mean': np.round(means, 4),
             'StdDev': std_devs,
             'feature_type': all_fts
         })
@@ -83,7 +84,7 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
         # sns.set(style="whitegrid")
         sns.set_theme()
         
-        cols = []
+        cols, hue_names = [], []
         color_model_scheme = {'GNN graph based':'#05F140', 'GNN one hot':'#253957', 'MLP':'#FFB400', 'Heuristics':'#00B4D8', 'Community detection': '#EF233C'}#9B7EDE #FFDF64 #5FBFF9 #FF595E
         for index, row in df.iterrows():
             # print(row)
@@ -91,17 +92,26 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
             ft = row['feature_type']
             if 'MLP' in model_name:
                 cols.append(color_model_scheme['MLP'])
+                hue_names.append('MLP')
             elif ft == 'graph_based':
                 cols.append(color_model_scheme['GNN graph based'])
+                hue_names.append('GNN graph based')
             elif model_name in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
                 cols.append(color_model_scheme['Heuristics'])
+                hue_names.append('Heuristics')
             elif model_name in ["Spectral clustering", "Agglomerative clustering", "Girvan-Newman", "Label propagation", "Relational neighbor classifier", "Multi-Rank-Walk", "Ridge regression"]:
                 cols.append(color_model_scheme['Community detection'])
+                hue_names.append('Community detection')
             else:
                 cols.append(color_model_scheme['GNN one hot'])
+                hue_names.append('GNN one hot')
 
-        bar_plot = sns.barplot(x=df.index, y=df.Mean, data=df, ci=None, palette=cols)  # , palette="viridis")
+        bar_plot = sns.barplot(x=df.index, y=df.Mean, data=df, palette=color_model_scheme, hue=hue_names)  # , palette="viridis")
+        for i in range(len(bar_plot.containers)):
+            bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=6)
         bar_plot.set_xticklabels(df.Classifier)
+        # print(bar_plot.containers[0])
+        
 
         # Adding error bars
         for i, (mean, std) in enumerate(zip(df['Mean'], df['StdDev'])):
@@ -109,12 +119,12 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
 
             # Optionally annotate the bars with the exact mean values
             if annotate:
-                bar_plot.text(i, mean + std + 0.01, f'{mean:.2f}', ha='center', va='bottom', fontsize=6)
+                bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=6)
                 
         
-        for k, v in color_model_scheme.items():
-            if k != 'Community detection':
-                plt.scatter([],[], c=v, label=k)
+        # for k, v in color_model_scheme.items():
+        #     if k != 'Community detection':
+        #         plt.scatter([],[], c=v, label=k)
 
         if class_plot_only is None:
             plt.title(f'Model performance for {dataset_dir}')
@@ -122,7 +132,13 @@ def visualize_classifier_data(data_path, fig_path=None, weight_type=None, mask_p
             plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})')
         plt.xlabel('Model')
         plt.ylabel('Mean f1-macro score')
-        plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center')  # Rotate x-axis labels for better readability
+        plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=8)  # Rotate x-axis labels for better readability
+        ax = plt.gca()
+        for i in range(len(ax.get_xticklabels())):
+            if ax.get_xticklabels()[i].get_text() in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
+                break
+            else:
+                plt.setp(ax.get_xticklabels()[i], color='red', weight='bold')
         plt.legend()
         plt.tight_layout()  # Adjust the layout to make room for the rotated labels
         if fig_path is not None:

@@ -1,0 +1,1 @@
+{"f1_macro": 0.6802896579282357, "f1_weighted": 0.8417601724282089, "accuracy": 0.8364779874213837, "class_scores": {"Udmurts,Besermyan": 0.6923076923076923, "Tatars,Volga-Tatars,Mishar-Tatars,Kryashens": 0.8936170212765957, "Chuvash": 0.7602339181286549, "Mari": 0.375}, "skipped_nodes": 8, "model_name": "LongestIbd"}
