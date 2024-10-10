@@ -792,10 +792,10 @@ class GL_GINConv_3l_128h(torch.nn.Module):
             nn=torch.nn.Sequential(
                 torch.nn.Linear(init_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU(),
+                torch.nn.ELU(),
                 torch.nn.Linear(hidden_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU() # ELU ?
+                torch.nn.ELU()
             ),
             eps=0.0  # Add a small value to the denominator for numerical stability
         )]
@@ -806,10 +806,10 @@ class GL_GINConv_3l_128h(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU(),
+                        torch.nn.ELU(),
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU()
+                        torch.nn.ELU()
                     ),
                     eps=0.0
                 )
@@ -839,10 +839,10 @@ class GL_GINConv_3l_512h(torch.nn.Module):
             nn=torch.nn.Sequential(
                 torch.nn.Linear(init_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU(),
+                torch.nn.ELU(),
                 torch.nn.Linear(hidden_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU()
+                torch.nn.ELU()
             ),
             eps=0.0  # Add a small value to the denominator for numerical stability
         )]
@@ -853,10 +853,10 @@ class GL_GINConv_3l_512h(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU(),
+                        torch.nn.ELU(),
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU()
+                        torch.nn.ELU()
                     ),
                     eps=0.0
                 )
@@ -886,10 +886,10 @@ class GL_GINConv_9l_128h(torch.nn.Module):
             nn=torch.nn.Sequential(
                 torch.nn.Linear(init_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU(),
+                torch.nn.ELU(),
                 torch.nn.Linear(hidden_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU()
+                torch.nn.ELU()
             ),
             eps=0.0  # Add a small value to the denominator for numerical stability
         )]
@@ -900,10 +900,10 @@ class GL_GINConv_9l_128h(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU(),
+                        torch.nn.ELU(),
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU()
+                        torch.nn.ELU()
                     ),
                     eps=0.0
                 )
@@ -933,10 +933,10 @@ class GL_GINConv_9l_512h(torch.nn.Module):
             nn=torch.nn.Sequential(
                 torch.nn.Linear(init_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU(),
+                torch.nn.ELU(),
                 torch.nn.Linear(hidden_dim, hidden_dim),
                 # torch.nn.BatchNorm1d(hidden_dim),
-                torch.nn.ReLU()
+                torch.nn.ELU()
             ),
             eps=0.0  # Add a small value to the denominator for numerical stability
         )]
@@ -947,10 +947,10 @@ class GL_GINConv_9l_512h(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU(),
+                        torch.nn.ELU(),
                         torch.nn.Linear(hidden_dim, hidden_dim),
                         # torch.nn.BatchNorm1d(hidden_dim),
-                        torch.nn.ReLU()
+                        torch.nn.ELU()
                     ),
                     eps=0.0
                 )
@@ -1016,7 +1016,7 @@ class GL_GATConv_3l_128h(torch.nn.Module):
 
         for layer in self.layers:
             h = layer(h, edge_index, edge_weight)
-            h = F.leaky_relu(h)
+            h = F.elu(h)
             h = F.dropout(h, p=self.dp, training=self.training)
 
         h = self.fc(h)
@@ -1076,7 +1076,7 @@ class GL_GATConv_3l_512h(torch.nn.Module):
 
         for layer in self.layers:
             h = layer(h, edge_index, edge_weight)
-            h = F.leaky_relu(h)
+            h = F.elu(h)
             h = F.dropout(h, p=self.dp, training=self.training)
 
         h = self.fc(h)
@@ -1137,7 +1137,7 @@ class GL_GATConv_9l_128h(torch.nn.Module):
 
         for layer in self.layers:
             h = layer(h, edge_index, edge_weight)
-            h = F.leaky_relu(h)
+            h = F.elu(h)
             h = F.dropout(h, p=self.dp, training=self.training)
 
         h = self.fc(h)
@@ -1195,7 +1195,7 @@ class GL_GATConv_9l_512h(torch.nn.Module):
 
         for layer in self.layers:
             h = layer(h, edge_index, edge_weight)
-            h = F.leaky_relu(h)
+            h = F.elu(h)
             h = F.dropout(h, p=self.dp, training=self.training)
 
         h = self.fc(h)
