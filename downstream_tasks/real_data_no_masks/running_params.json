@@ -2,7 +2,7 @@
     "train_size":0.6,
     "valid_size":0.2, 
     "test_size":0.2,
-    "num_splits":1,
+    "num_splits":10,
     "splits_save_dir": null, 
     "mask_size": null,
     "sub_train_size": null, 
@@ -12,7 +12,7 @@
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
     "batch_size":[10],
-    "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_no_mask",
+    "log_dir":"/mnt/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_no_mask",
     "patience":[10],
     "num_epochs":[10],
     "train_iterations_per_sample":[100],
@@ -23,5 +23,7 @@
     "seed":42,
     "correct_and_smooth":null,
     "log_ibd":false,
-    "plot_cm":true
+    "plot_cm":false,
+    "use_class_balance_weight":true,
+    "save_dataset_stats":true
 }

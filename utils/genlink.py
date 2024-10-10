@@ -14,7 +14,7 @@ import networkx as nx
 import torch.nn as nn
 from sklearn import metrics
 from multiprocessing import Pool
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import numba
 from numba import njit, prange
 # numba.config.THREADING_LAYER = 'workqueue'
@@ -24,7 +24,7 @@ import torch.nn.functional as F
 from scipy.spatial.distance import squareform
 from torch.utils.data import TensorDataset, DataLoader
 from scipy.cluster.hierarchy import dendrogram, linkage
-from sklearn.metrics import f1_score, accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import reverse_cuthill_mckee
 from sklearn.model_selection import KFold
@@ -47,7 +47,6 @@ from sklearn.metrics.cluster import homogeneity_score
 from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
 from sklearn.neighbors import KNeighborsClassifier
 from torch.nn import Linear, LayerNorm, BatchNorm1d, Sequential, LeakyReLU, Dropout
 from torch_geometric.nn import GCNConv, GATConv, TransformerConv, NNConv, SGConv, ARMAConv, TAGConv, ChebConv, DNAConv, LabelPropagation, \
@@ -545,6 +544,22 @@ class DataProcessor:
             features['Weighted average shortest path length'] = nx.average_shortest_path_length(G, weight='ibd_sum')
             features['Is tree'] = nx.is_tree(G)
             features['Is forest'] = nx.is_forest(G)
+
+            A = nx.to_numpy_array(G)
+            degrees = np.sum(A, axis=1)
+            numerator = 0
+            n = len(G.nodes)
+            for i in range(n):
+                for j in range(n):
+                    for k in range(n):
+                        numerator += A[i, j] * A[j, k] * A[k, i]
+
+            denominator = 0.5 * np.sum(degrees * (degrees - 1))
+
+            if denominator > 0:
+                features['global_clustering_coefficient'] = numerator / denominator
+            else:
+                features['global_clustering_coefficient'] = 0
             
             cd = nx.degree_centrality(G)
             cda = []
@@ -1772,7 +1787,7 @@ class NullSimulator:
 
 
 class Trainer:
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False):
         self.data = data
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
@@ -1785,6 +1800,13 @@ class Trainer:
             self.weight = torch.tensor([1. for i in range(len(self.data.classes)-1)]).to(self.device) if weight is None else weight
         else:
             self.weight = torch.tensor([1. for i in range(len(self.data.classes))]).to(self.device) if weight is None else weight
+        if use_class_balance_weight and no_mask_class_in_df:
+            print('Using loss weights according to class balance')
+            all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
+            count_dict = Counter(all_classes)
+            count_dict = dict(sorted(count_dict.items()))
+            self.weight = torch.tensor(list(count_dict.values())).to(self.device)
+            self.weight = torch.max(self.weight) / self.weight
         self.batch_size = batch_size # not used by far
         self.log_dir = log_dir
         self.patience = patience
@@ -1909,6 +1931,22 @@ class Trainer:
         f1_weighted_score = f1_score(y_true, y_pred, average='weighted')
         if not self.disable_printing:
             print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+
+        recall_macro_score = recall_score(y_true, y_pred, average='macro')
+        if not self.disable_printing:
+            print(f"recall macro score on test dataset: {recall_macro_score}")
+
+        recall_weighted_score = recall_score(y_true, y_pred, average='weighted')
+        if not self.disable_printing:
+            print(f"recall weighted score on test dataset: {recall_weighted_score}")
+
+        precision_macro_score = precision_score(y_true, y_pred, average='macro')
+        if not self.disable_printing:
+            print(f"recall macro score on test dataset: {precision_macro_score}")
+
+        precision_weighted_score = precision_score(y_true, y_pred, average='weighted')
+        if not self.disable_printing:
+            print(f"recall weighted score on test dataset: {precision_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred)
         if not self.disable_printing:
@@ -1942,6 +1980,13 @@ class Trainer:
             # sns.heatmap(cm, annot=True, fmt=".2f", ax=ax)
             # plt.show()
 
+        if self.device != 'cpu':
+            memory_allocated = torch.cuda.memory_allocated(self.device) / (1024 ** 2)
+            memory_reserved = torch.cuda.memory_reserved(self.device) / (1024 ** 2)
+        else:
+            memory_allocated = None
+            memory_reserved = None
+
         if self.remove_saved_model_after_testing:
             os.remove(self.log_dir + '/model_best.bin')
             
@@ -1952,7 +1997,7 @@ class Trainer:
         else:
             self.model = self.model.eval().cpu()
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing), 'memory_allocated_MB': memory_allocated, 'memory_reserved_MB': memory_reserved}
         
 
     def run(self):

@@ -131,7 +131,8 @@ class Runner:
                                 correct_and_smooth=self.running_params['correct_and_smooth'], 
                                 no_mask_class_in_df=True,
                                 remove_saved_model_after_testing=True,
-                                plot_cm=self.running_params['plot_cm'])
+                                plot_cm=self.running_params['plot_cm'],
+                                use_class_balance_weight=self.running_params['use_class_balance_weight'])
                 results = trainer.run()
 
                 if results['f1_macro'] >= max_f1_macro_score:
@@ -175,6 +176,17 @@ class Runner:
                                                                 keep_train_nodes=self.running_params['keep_train_nodes'], 
                                                                 mask_random_state=self.running_params['mask_random_state'])
                     self.datasets[dataset_name][s] = dataset
+                    if self.running_params['save_dataset_stats']:
+                        dataset_stats_log_dir = self.running_params['log_dir'] + '/' + 'dataset_stats' + '/' + dataset_name + '/' + f'split_{s}'
+                        if not os.path.exists(dataset_stats_log_dir):
+                            os.makedirs(dataset_stats_log_dir)
+                        dataset_copy = copy.deepcopy(dataset)
+                        G = dataset_copy.nx_graph.subgraph(dataset_copy.train_nodes)
+
+                        dataset_statistic = dict()
+                        dataset_statistic['number_connected_components'] = nx.number_connected_components(G)
+                        with open(dataset_stats_log_dir + f'/stats.json', 'w') as f:
+                            json.dump(dataset_statistic, f)
 
         if len(self.gnn_models):
             explist = []

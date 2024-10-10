@@ -21,7 +21,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
 
         results = dict()
         for dir_path in all_dirs:
-            if 'relu' not in dir_path and 'gelu' not in dir_path and 'leaky_relu' not in dir_path and 'nw' not in dir_path:
+            if True: #'relu' not in dir_path and 'gelu' not in dir_path and 'leaky_relu' not in dir_path and 'nw' not in dir_path:
                 with open(join(all_models_per_dataset_path, dir_path+'/results.json'), 'r') as f:
                     curr_res = json.load(f)
                     if 'graph_based' in dir_path:
