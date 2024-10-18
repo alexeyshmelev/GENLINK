@@ -265,7 +265,8 @@ class DataProcessor:
             raise Exception("All sizes should add up to 1.0!")
 
         if mask_size is not None and sub_train_size is not None:
-            assert sub_train_size + mask_size <= 1.
+            assert mask_size <= 1.
+            assert sub_train_size < 1.
         elif mask_size is None and sub_train_size is None:
             pass
         else:
@@ -317,11 +318,14 @@ class DataProcessor:
                     self.mask_nodes.append(node_classes_masks_random.iloc[i, 0])
                 node_counter_mask[node_class] += 1
 
-            if self.mask_size == 0:
+            if self.mask_size == 0.0:
                 assert len(self.mask_nodes) == 0
 
+            if self.mask_size == 1.0:
+                assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
+
         if mask_size is not None:
-            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0]}% of all nodes in dataset were used')
+            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
         else:
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
 
@@ -1411,6 +1415,10 @@ class Heuristics:
 
         f1_macro_score = f1_score(y_true, y_pred, average='macro')
         f1_weighted_score = f1_score(y_true, y_pred, average='weighted')
+        recall_macro_score = recall_score(y_true, y_pred, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred, average='weighted')
         acc = accuracy_score(y_true, y_pred)
 
         f1_macro_score_per_class = dict()
@@ -1419,7 +1427,7 @@ class Heuristics:
                 score_per_class = f1_score(y_true, y_pred, average='macro', labels=[i])
                 f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class
+        return f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class
 
     def max_number_of_edges_per_class(self):
         y_true, y_preds = [], []
@@ -1440,9 +1448,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
 
 
     def max_number_of_edges_per_class_per_population(self):
@@ -1469,9 +1477,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
             
     def max_number_of_segments_per_class(self):
         y_true, y_preds = [], []
@@ -1497,9 +1505,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
 
 
     def longest_ibd(self):
@@ -1527,9 +1535,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
 
 
     def max_ibd_sum_per_class(self):
@@ -1556,9 +1564,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
 
 
     def max_ibd_sum_per_class_per_population(self):
@@ -1591,9 +1599,9 @@ class Heuristics:
             else:
                 isolated_test_nodes += 1
 
-        f1_macro_score, f1_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
 
                 
 
@@ -2163,16 +2171,16 @@ def independent_test(model_path, model_cls, df, vertex_id, gpu_id, test_type, ma
    
 
         
-class BaselineMethods:
+class CommunityDetection:
     def __init__(self, data: DataProcessor):
         self.data = data
         
-    def torch_geometric_label_propagation(self, num_layers, alpha, use_weight=True, use_masking_from_data=False):
+    def torch_geometric_label_propagation(self, num_layers, alpha, use_weight=True, use_masking_from_data=True):
         model = LabelPropagation(num_layers=num_layers, alpha=alpha)
         
         y_pred = []
         y_true = []
-        for i in tqdm(range(len(self.data.array_of_graphs_for_testing)), desc='TG label propagation'):
+        for i in tqdm(range(len(self.data.array_of_graphs_for_testing)), desc='Label propagation'):
             graph = self.data.array_of_graphs_for_testing[i]
             # print(graph.x[-1])
             y_true.append(graph.y[-1])
@@ -2185,22 +2193,27 @@ class BaselineMethods:
             y_pred.append(model(y=graph.y, mask = node_mask,  edge_index=graph.edge_index, edge_weight=graph.weight if use_weight==True else None).argmax(dim=-1)[-1]) # -1 is always test vertex
             
         f1_macro_score = f1_score(y_true, y_pred, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
     def map_cluster_labels_with_target_classes(self, cluster_labels, target_labels):
         # vouter algorithm
@@ -2220,17 +2233,20 @@ class BaselineMethods:
         return mapping
     
     def spectral_clustering_thread(self, test_node_idx):
-        current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
+        if self.data.mask_nodes is not None:
+            current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[test_node_idx]]
+        else:
+            current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
         G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
         # print(nx.number_connected_components(G_test)) ########################## check it for all datasets
         for c in nx.connected_components(G_test_init):
             if self.data.test_nodes[test_node_idx] in c:
                 G_test = G_test_init.subgraph(c).copy()
         if len(G_test.nodes) == 1:
-            print('Isolated test node found, skipping!')
+            # print('Isolated test node found, skipping!')
             return -1, -1, -1, 1
         elif len(G_test) <= len(self.data.classes):
-            print('Too few nodes!!! Skipping!!!')
+            # print('Too few nodes!!! Skipping!!!')
             return -1, -1, -1, 1
         else:
             L = nx.to_numpy_array(G_test)
@@ -2279,25 +2295,30 @@ class BaselineMethods:
         y_pred_cluster = y_pred_cluster[y_pred_cluster != -1]
         y_true = y_true[y_true != -1]
                 
-        print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
+        # print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': np.sum(skipped_nodes).item()}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
     
     def simrank_distance(self, G):
@@ -2309,7 +2330,10 @@ class BaselineMethods:
         return np.round(1 - np.array(simrank_matrix), 6) # check order of nodes
     
     def plot_dendogram(self, test_node, fig_size, leaf_font_size, save_path=None):
-        current_nodes = self.data.train_nodes + [test_node]
+        if self.data.mask_nodes is not None:
+            current_nodes = self.data.train_nodes + self.data.mask_nodes + [test_node]
+        else:
+            current_nodes = self.data.train_nodes + [test_node]
         G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
         
         distance = self.simrank_distance(G_test_init)
@@ -2330,17 +2354,20 @@ class BaselineMethods:
         skipped_nodes = 0
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Agglomerative clustering'):
-            current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
+            if self.data.mask_nodes is not None:
+                current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[i]]
+            else:
+                current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
             G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
             for c in nx.connected_components(G_test_init):
                 if self.data.test_nodes[i] in c:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
-                print('Isolated test node found, skipping!')
+                # print('Isolated test node found, skipping!')
                 skipped_nodes += 1
                 continue
             elif len(G_test) <= len(self.data.classes):
-                print('Too few nodes!!! Skipping!!!')
+                # print('Too few nodes!!! Skipping!!!')
                 skipped_nodes += 1
                 continue
             else:
@@ -2362,35 +2389,43 @@ class BaselineMethods:
                 cluster2target_mapping = self.map_cluster_labels_with_target_classes(preds, ground_truth)
                 y_pred_classes.append(cluster2target_mapping[preds[graph_test_node_list.index(self.data.test_nodes[i])]])
                 
-        print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
+        # print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': skipped_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
     def girvan_newman_thread(self, test_node_idx):
 
-        current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
+        if self.data.mask_nodes is not None:
+            current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[test_node_idx]]
+        else:
+            current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
         G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
         for c in nx.connected_components(G_test_init):
             if self.data.test_nodes[test_node_idx] in c:
                 G_test = G_test_init.subgraph(c).copy()
         if len(G_test.nodes) == 1:
-            print('Isolated test node found, skipping!')
+            # print('Isolated test node found, skipping!')
             return -1, -1, -1, 1
         else:
             comp = nx.community.girvan_newman(G_test.copy())
@@ -2452,25 +2487,30 @@ class BaselineMethods:
         y_pred_cluster = y_pred_cluster[y_pred_cluster != -1]
         y_true = y_true[y_true != -1]
                 
-        print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
+        # print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': np.sum(skipped_nodes)}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
         
         
     def initial_conditional(self, G, y_labeled, x_labeled):
@@ -2485,7 +2525,7 @@ class BaselineMethods:
         # probs[x_labeled] = 0
         # probs[x_labeled, y_labeled] = 1
         
-        assert np.sum(probs.sum(axis=1) > 1) == 1
+        # assert np.sum(probs.sum(axis=1) > 1) == 1
 
         probs = probs / probs.sum(1, keepdims=1)
 
@@ -2511,7 +2551,11 @@ class BaselineMethods:
             # print(diff)
             next_cond = self.update_conditional(A, cond, x_labeled, graph_nodes)
             # print(np.all(next_cond == cond))
-            diff = np.linalg.norm(cond[graph_nodes.index(x_unlabeled[0])] - next_cond[graph_nodes.index(x_unlabeled[0])])
+            cond_array, next_cond_array = [], []
+            for unlabelled_node in x_unlabeled:
+                cond_array.append(list(cond[graph_nodes.index(unlabelled_node)]))
+                next_cond_array.append(list(next_cond[graph_nodes.index(unlabelled_node)]))
+            diff = np.linalg.norm(np.array(cond_array) - np.array(next_cond_array))
             diffs.append(diff)
             cond = next_cond
         return np.argmax(cond, axis=1)
@@ -2524,32 +2568,48 @@ class BaselineMethods:
         skipped_nodes = 0
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Relational classifier'):
-            current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
+            if self.data.mask_nodes is not None:
+                current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[i]]
+            else:
+                current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
             G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
             for c in nx.connected_components(G_test_init):
                 if self.data.test_nodes[i] in c:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
-                print('Isolated test node found, skipping!')
+                # print('Isolated test node found, skipping!')
                 skipped_nodes += 1
                 continue
             elif len(G_test) <= len(self.data.classes):
-                print('Too few nodes!!! Skipping!!!')
+                # print('Too few nodes!!! Skipping!!!')
                 skipped_nodes += 1
                 continue
             else:
                 
                 ground_truth_all = []
                 ground_truth_train_nodes_only = []
+                cc_train_nodes = []
+                cc_test_nodes = []
                 nodes_classes = nx.get_node_attributes(G_test, name='class')
                 for node in G_test.nodes:
                     ground_truth_all.append(nodes_classes[node])
                     if node != self.data.test_nodes[i]:
-                        ground_truth_train_nodes_only.append(nodes_classes[node])
-                cc_train_nodes = np.array(list(G_test.nodes))
-                cc_train_nodes = cc_train_nodes[cc_train_nodes != self.data.test_nodes[i]]
+                        if self.data.mask_nodes is not None:
+                            if node not in self.data.mask_nodes:
+                                ground_truth_train_nodes_only.append(nodes_classes[node])
+                                cc_train_nodes.append(node)
+                            else:
+                                cc_test_nodes.append(node)
+                        else:
+                            ground_truth_train_nodes_only.append(nodes_classes[node])
+                            cc_train_nodes.append(node)
+                    else:
+                        cc_test_nodes.append(node)
+
                 assert len(ground_truth_train_nodes_only) == len(cc_train_nodes)
-                preds = self.relational_neighbor_classifier_core(G_test, threshold, cc_train_nodes, np.array([self.data.test_nodes[i]]), np.array(ground_truth_train_nodes_only)) # ground_truth contains classes for ALL nodes, includind test node
+                if self.data.mask_nodes is None:
+                    assert len(cc_test_nodes) == 1
+                preds = self.relational_neighbor_classifier_core(G_test, threshold, np.array(cc_train_nodes), np.array(cc_test_nodes), np.array(ground_truth_train_nodes_only)) # ground_truth contains classes for ALL nodes, includind test node
 
                 graph_test_node_list = list(G_test.nodes)
                 y_true.append(ground_truth_all[graph_test_node_list.index(self.data.test_nodes[i])])
@@ -2557,22 +2617,27 @@ class BaselineMethods:
                 y_pred_classes.append(preds[graph_test_node_list.index(self.data.test_nodes[i])])
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': skipped_nodes} 
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
     
     def multi_rank_walk_core(self, G, x_labeled, x_unlabeled, y_labeled, alpha):
@@ -2605,11 +2670,11 @@ class BaselineMethods:
                 if self.data.test_nodes[i] in c:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
-                print('Isolated test node found, skipping!')
+                # print('Isolated test node found, skipping!')
                 skipped_nodes += 1
                 continue
             elif len(G_test) <= len(self.data.classes):
-                print('Too few nodes!!! Skipping!!!')
+                # print('Too few nodes!!! Skipping!!!')
                 skipped_nodes += 1
                 continue
             else:
@@ -2631,22 +2696,27 @@ class BaselineMethods:
                 y_pred_classes.append(preds[graph_test_node_list.index(self.data.test_nodes[i])])
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = float(score_per_class)
 
-        return {'f1_macro': float(f1_macro_score), 'f1_weighted': float(f1_weighted_score), 'accuracy':float(acc), 'class_scores': f1_macro_score_per_class, 'skipped_nodes': int(skipped_nodes)}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
         
         
     def tikhonov_regularization(self, G, gamma, x_labeled, y_labeled, p):
@@ -2692,11 +2762,11 @@ class BaselineMethods:
                 if self.data.test_nodes[i] in c:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
-                print('Isolated test node found, skipping!')
+                # print('Isolated test node found, skipping!')
                 skipped_nodes += 1
                 continue
             elif len(G_test) <= len(self.data.classes):
-                print('Too few nodes!!! Skipping!!!')
+                # print('Too few nodes!!! Skipping!!!')
                 skipped_nodes += 1
                 continue
             else:
@@ -2718,25 +2788,44 @@ class BaselineMethods:
                 y_pred_classes.append(preds[graph_test_node_list.index(self.data.test_nodes[i])])
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
-        print(f"f1 macro score on test dataset: {f1_macro_score}")
+        # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
         f1_weighted_score = f1_score(y_true, y_pred_classes, average='weighted')
-        print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+        # print(f"f1 weighted score on test dataset: {f1_weighted_score}")
         
         acc = accuracy_score(y_true, y_pred_classes)
-        print(f"accuracy score on test dataset: {acc}")
+        # print(f"accuracy score on test dataset: {acc}")
+
+        recall_macro_score = recall_score(y_true, y_pred_classes, average='macro')
+        recall_weighted_score = recall_score(y_true, y_pred_classes, average='weighted')
+        precision_macro_score = precision_score(y_true, y_pred_classes, average='macro')
+        precision_weighted_score = precision_score(y_true, y_pred_classes, average='weighted')
         
         f1_macro_score_per_class = dict()
         
         for i in range(len(self.data.classes)):
             score_per_class = f1_score(y_true, y_pred_classes, average='macro', labels=[i])
-            print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+            # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': skipped_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
         
-    def sklearn_label_propagation():
-        print('Better for graph-based features')
-        pass
+    def run_community_detection(self, heuristic_name, masking):
+        if heuristic_name == 'LabelPropagation':
+            self.data = self.data.make_train_valid_test_datasets_with_numba(feature_type='one_hot', 
+                                                                model_type='homogeneous', 
+                                                                train_dataset_type='multiple', 
+                                                                test_dataset_type='multiple',
+                                                                masking=masking,
+                                                                no_mask_class_in_df=True)
+            return self.torch_geometric_label_propagation(1, 0.0001)
+        elif heuristic_name == 'GirvanNewmann':
+            return self.girvan_newman()
+        elif heuristic_name == 'AgglomerativeClustering':
+            return self.agglomerative_clustering()
+        elif heuristic_name == 'SpectralClustering':
+            return self.spectral_clustering()
+        elif heuristic_name == 'RelationalNeighborClassifier':
+            return self.relational_neighbor_classifier(0.001)
             

@@ -11,6 +11,7 @@ from os.path import isdir, join
 def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None, highlight_best=False):   
 
     all_dataset_dirs = [f for f in listdir(data_path) if isdir(join(data_path, f))]
+    all_dataset_dirs = (np.array(all_dataset_dirs)[np.array(all_dataset_dirs) != 'dataset_stats']).tolist()
     if dataset_plot_only is not None:
         all_dataset_dirs = (np.array(all_dataset_dirs)[np.array(all_dataset_dirs) == dataset_plot_only]).tolist()
     for dataset_dir in all_dataset_dirs:

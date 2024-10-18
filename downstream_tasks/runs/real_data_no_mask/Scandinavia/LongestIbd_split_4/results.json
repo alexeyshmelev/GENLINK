@@ -1,1 +1,0 @@
-{"f1_macro": 0.9158588577943417, "f1_weighted": 0.9286156377229147, "accuracy": 0.9302325581395349, "class_scores": {"Swedes": 0.9459459459459459, "Norwegians": 0.9400921658986175, "Danes": 0.8615384615384616}, "skipped_nodes": 0, "model_name": "LongestIbd"}

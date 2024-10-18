@@ -5,7 +5,7 @@
     "num_splits":10,
     "splits_save_dir": null, 
     "mask_size": 0.25,
-    "sub_train_size": 0.25, 
+    "sub_train_size": [0.25], 
     "keep_train_nodes": true, 
     "mask_random_state": 42,
     "lr":[0.0001],
@@ -21,5 +21,9 @@
     "masking":true,
     "disable_printing":true,
     "seed":42,
-    "correct_and_smooth":null
+    "correct_and_smooth":null,
+    "log_ibd":false,
+    "plot_cm":false,
+    "use_class_balance_weight":true,
+    "save_dataset_stats":true
 }

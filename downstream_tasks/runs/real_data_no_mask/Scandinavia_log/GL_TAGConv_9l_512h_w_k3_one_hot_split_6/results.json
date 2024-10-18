@@ -1,1 +1,0 @@
-{"f1_macro": 0.950658962539765, "f1_weighted": 0.9488381151965264, "accuracy": 0.9488372093023256, "class_scores": {"Swedes": 0.9452054794520548, "Norwegians": 0.9478672985781991, "Danes": 0.958904109589041}, "skipped_nodes": 0, "model_name": "GL_TAGConv_9l_512h_w_k3"}

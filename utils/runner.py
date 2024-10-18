@@ -1,4 +1,4 @@
-from genlink import DataProcessor, NullSimulator, Trainer, BaselineMethods, Heuristics
+from genlink import DataProcessor, NullSimulator, Trainer, CommunityDetection, Heuristics
 from multiprocessing import Manager, Array, current_process, get_context, Process, Lock
 from tqdm import tqdm
 import torch
@@ -30,7 +30,6 @@ class Runner:
 
             with lock:
                 if 0 not in shared_explist:
-                    # print('NONONONNNONONONONONNOONONONONONOONOONNOONONNONONONONONONONONONONONONONONONON')
                     break
                 else:
                     for i in range(len(shared_explist)):
@@ -90,7 +89,6 @@ class Runner:
                                                                 masking=masking,
                                                                 no_mask_class_in_df=True,
                                                                 log_edge_weights=self.running_params['log_ibd'])
-            # print('OKOKKKKOKOKOKOKOKOKOKOKO', dataset)
             # select parameters for grid search
             curr_params = dict()
             curr_params['lr'] = self.running_params['lr']
@@ -229,6 +227,33 @@ class Runner:
                             dataset = copy.deepcopy(self.datasets[dataset_name][s])
                         h = Heuristics(dataset)
                         results = h.run_heuristic(heuristic)
+                        if not os.path.isdir(log_dir):
+                            os.mkdir(log_dir)
+                        with open(log_dir + f'/results.json', 'w') as f:
+                            results['model_name'] = heuristic
+                            json.dump(results, f)
+
+
+
+
+        if len(self.community_detection_models):
+            for dataset_name in self.datasets.keys():
+                for cd_model in tqdm(self.community_detection_models, desc=f"Running community detection for {dataset_name}"):
+                    for s in range(self.running_params['num_splits']):
+                        log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + cd_model + '_' + f'split_{s}'
+                        if self.running_params['log_ibd']:
+                            dataset = copy.deepcopy(self.datasets[dataset_name][s])
+                            # edge_weights = nx.get_edge_attributes(dataset.nx_graph, 'ibd_sum')
+                            for edge in dataset.nx_graph.edges:
+                                dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] = -np.log2(dataset.nx_graph[edge[0]][edge[1]]['ibd_sum'] / 6600)
+                        else:
+                            dataset = copy.deepcopy(self.datasets[dataset_name][s])
+                        cd = CommunityDetection(dataset)
+                        if self.running_params['mask_size'] is not None:
+                            masking=True
+                        else:
+                            masking=False
+                        results = cd.run_community_detection(cd_model, masking)
                         if not os.path.isdir(log_dir):
                             os.mkdir(log_dir)
                         with open(log_dir + f'/results.json', 'w') as f:

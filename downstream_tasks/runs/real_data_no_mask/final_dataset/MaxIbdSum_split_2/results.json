@@ -1,1 +1,0 @@
-{"f1_macro": 0.4658185759059122, "f1_weighted": 0.5034428099145621, "accuracy": 0.5225694444444444, "class_scores": {"krasnodar": 0.5587301587301587, "yaroslavl": 0.32432432432432434, "ryazan": 0.611353711790393, "kaluga": 0.35135135135135137, "vologda": 0.48333333333333334}, "skipped_nodes": 0, "model_name": "MaxIbdSum"}

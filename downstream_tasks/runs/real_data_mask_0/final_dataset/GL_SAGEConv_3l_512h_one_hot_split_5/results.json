@@ -1,1 +1,0 @@
-{"f1_macro": 0.21424785510024996, "f1_weighted": 0.26621226245543955, "accuracy": 0.3274021352313167, "class_scores": {"krasnodar": 0.30927835051546393, "yaroslavl": 0.02247191011235955, "ryazan": 0.45778611632270166, "kaluga": 0.020833333333333332, "vologda": 0.2608695652173913}, "skipped_nodes": 14, "model_name": "GL_SAGEConv_3l_512h"}

@@ -1,1 +1,0 @@
-{"f1_macro": 0.9793413775766716, "f1_weighted": 0.9811728591761731, "accuracy": 0.9812206572769953, "class_scores": {"Swedes": 0.9866666666666667, "Norwegians": 0.9807692307692307, "Danes": 0.9705882352941176}, "skipped_nodes": 2, "model_name": "MaxIbdSumPerClassSize"}

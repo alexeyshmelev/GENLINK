@@ -38,7 +38,7 @@ if __name__ == '__main__':
         device = list(map(lambda x: int(x), args.hardware.split('|')))
         gpu_map = {idx:gpu for idx, gpu in enumerate(device)}
 
-    NON_AI_MODELS = ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount', 'AgglomerativeClustering', 'GirvanNewmann', 'LabelPropagation', 'MultiRankWalk', 'RelationalNeighbor', 'RidgeRegression', 'SpectralClustering']
+    NON_AI_MODELS = ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount', 'AgglomerativeClustering', 'GirvanNewmann', 'LabelPropagation', 'MultiRankWalk', 'RelationalNeighborClassifier', 'RidgeRegression', 'SpectralClustering']
     all_models = list(filter(lambda x: x[:2] == 'GL', [cls_name for cls_name, cls_obj in inspect.getmembers(sys.modules['models']) if inspect.isclass(cls_obj)])) + NON_AI_MODELS
 
     # load model names

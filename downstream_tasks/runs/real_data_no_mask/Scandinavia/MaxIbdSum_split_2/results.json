@@ -1,1 +1,0 @@
-{"f1_macro": 0.952922209309725, "f1_weighted": 0.9620476766406116, "accuracy": 0.9627906976744186, "class_scores": {"Swedes": 0.9798657718120806, "Norwegians": 0.9671361502347418, "Danes": 0.9117647058823529}, "skipped_nodes": 0, "model_name": "MaxIbdSum"}

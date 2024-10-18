@@ -1,1 +1,0 @@
-{"f1_macro": 0.9450594403259199, "f1_weighted": 0.9487099647582704, "accuracy": 0.9488372093023256, "class_scores": {"Swedes": 0.9583333333333334, "Norwegians": 0.9493087557603687, "Danes": 0.927536231884058}, "skipped_nodes": 0, "model_name": "MaxSegmentCount"}

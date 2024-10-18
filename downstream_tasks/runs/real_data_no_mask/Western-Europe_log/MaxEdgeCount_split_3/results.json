@@ -1,1 +1,0 @@
-{"f1_macro": 0.9321316069638808, "f1_weighted": 0.950488799006392, "accuracy": 0.951856946354883, "class_scores": {"English": 0.968421052631579, "Germans": 0.9205020920502092, "French": 0.8837209302325582, "Belgium": 0.9558823529411765}, "skipped_nodes": 42, "model_name": "MaxEdgeCount"}

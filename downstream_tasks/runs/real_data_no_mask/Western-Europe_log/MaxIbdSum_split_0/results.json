@@ -1,1 +1,0 @@
-{"f1_macro": 0.9205318062033371, "f1_weighted": 0.9503748652650664, "accuracy": 0.9524475524475524, "class_scores": {"English": 0.973432518597237, "Germans": 0.9322033898305084, "French": 0.8275862068965517, "Belgium": 0.948905109489051}, "skipped_nodes": 54, "model_name": "MaxIbdSum"}

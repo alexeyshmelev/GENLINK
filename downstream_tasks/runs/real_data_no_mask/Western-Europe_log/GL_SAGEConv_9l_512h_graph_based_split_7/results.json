@@ -1,1 +1,0 @@
-{"f1_macro": 0.9464651046257245, "f1_weighted": 0.963744380405666, "accuracy": 0.9643835616438357, "class_scores": {"English": 0.9807280513918629, "Germans": 0.9354838709677419, "French": 0.9051094890510949, "Belgium": 0.9645390070921985}, "skipped_nodes": 39, "model_name": "GL_SAGEConv_9l_512h"}

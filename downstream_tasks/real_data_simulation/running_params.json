@@ -13,13 +13,17 @@
     "loss":["CrossEntropyLoss"],
     "batch_size":[10],
     "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_simulation",
-    "patience":[4],
+    "patience":[10],
     "num_epochs":[10],
     "train_iterations_per_sample":[100],
-    "evaluation_steps":[20],
+    "evaluation_steps":[10],
     "loss_weights":[null],
     "masking":null,
     "disable_printing":true,
     "seed":42,
-    "correct_and_smooth":null
+    "correct_and_smooth":null,
+    "log_ibd":false,
+    "plot_cm":false,
+    "use_class_balance_weight":true,
+    "save_dataset_stats":true
 }
