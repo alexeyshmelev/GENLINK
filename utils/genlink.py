@@ -2187,6 +2187,7 @@ class CommunityDetection:
             if use_masking_from_data:
                 node_mask = list(graph.mask.to('cpu').detach().numpy())
                 assert node_mask[-1] == True
+                assert graph.y[-1] != -1
                 node_mask = node_mask[:-1] + [False]
             else:
                 node_mask = [True] * (len(graph.y)-1) + [False]
@@ -2233,10 +2234,8 @@ class CommunityDetection:
         return mapping
     
     def spectral_clustering_thread(self, test_node_idx):
-        if self.data.mask_nodes is not None:
-            current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[test_node_idx]]
-        else:
-            current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
+
+        current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
         G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
         # print(nx.number_connected_components(G_test)) ########################## check it for all datasets
         for c in nx.connected_components(G_test_init):
@@ -2354,10 +2353,7 @@ class CommunityDetection:
         skipped_nodes = 0
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Agglomerative clustering'):
-            if self.data.mask_nodes is not None:
-                current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[i]]
-            else:
-                current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
+            current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
             G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
             for c in nx.connected_components(G_test_init):
                 if self.data.test_nodes[i] in c:
@@ -2416,10 +2412,7 @@ class CommunityDetection:
     
     def girvan_newman_thread(self, test_node_idx):
 
-        if self.data.mask_nodes is not None:
-            current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[test_node_idx]]
-        else:
-            current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
+        current_nodes = self.data.train_nodes + [self.data.test_nodes[test_node_idx]]
         G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
         for c in nx.connected_components(G_test_init):
             if self.data.test_nodes[test_node_idx] in c:
@@ -2525,7 +2518,7 @@ class CommunityDetection:
         # probs[x_labeled] = 0
         # probs[x_labeled, y_labeled] = 1
         
-        # assert np.sum(probs.sum(axis=1) > 1) == 1
+        assert np.sum(probs.sum(axis=1) > 1) == 1
 
         probs = probs / probs.sum(1, keepdims=1)
 
@@ -2551,11 +2544,7 @@ class CommunityDetection:
             # print(diff)
             next_cond = self.update_conditional(A, cond, x_labeled, graph_nodes)
             # print(np.all(next_cond == cond))
-            cond_array, next_cond_array = [], []
-            for unlabelled_node in x_unlabeled:
-                cond_array.append(list(cond[graph_nodes.index(unlabelled_node)]))
-                next_cond_array.append(list(next_cond[graph_nodes.index(unlabelled_node)]))
-            diff = np.linalg.norm(np.array(cond_array) - np.array(next_cond_array))
+            diff = np.linalg.norm(cond[graph_nodes.index(x_unlabeled[0])] - next_cond[graph_nodes.index(x_unlabeled[0])])
             diffs.append(diff)
             cond = next_cond
         return np.argmax(cond, axis=1)
@@ -2568,10 +2557,7 @@ class CommunityDetection:
         skipped_nodes = 0
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Relational classifier'):
-            if self.data.mask_nodes is not None:
-                current_nodes = self.data.train_nodes + self.data.mask_nodes + [self.data.test_nodes[i]]
-            else:
-                current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
+            current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
             G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
             for c in nx.connected_components(G_test_init):
                 if self.data.test_nodes[i] in c:
@@ -2588,28 +2574,15 @@ class CommunityDetection:
                 
                 ground_truth_all = []
                 ground_truth_train_nodes_only = []
-                cc_train_nodes = []
-                cc_test_nodes = []
                 nodes_classes = nx.get_node_attributes(G_test, name='class')
                 for node in G_test.nodes:
                     ground_truth_all.append(nodes_classes[node])
                     if node != self.data.test_nodes[i]:
-                        if self.data.mask_nodes is not None:
-                            if node not in self.data.mask_nodes:
-                                ground_truth_train_nodes_only.append(nodes_classes[node])
-                                cc_train_nodes.append(node)
-                            else:
-                                cc_test_nodes.append(node)
-                        else:
-                            ground_truth_train_nodes_only.append(nodes_classes[node])
-                            cc_train_nodes.append(node)
-                    else:
-                        cc_test_nodes.append(node)
-
+                        ground_truth_train_nodes_only.append(nodes_classes[node])
+                cc_train_nodes = np.array(list(G_test.nodes))
+                cc_train_nodes = cc_train_nodes[cc_train_nodes != self.data.test_nodes[i]]
                 assert len(ground_truth_train_nodes_only) == len(cc_train_nodes)
-                if self.data.mask_nodes is None:
-                    assert len(cc_test_nodes) == 1
-                preds = self.relational_neighbor_classifier_core(G_test, threshold, np.array(cc_train_nodes), np.array(cc_test_nodes), np.array(ground_truth_train_nodes_only)) # ground_truth contains classes for ALL nodes, includind test node
+                preds = self.relational_neighbor_classifier_core(G_test, threshold, cc_train_nodes, np.array([self.data.test_nodes[i]]), np.array(ground_truth_train_nodes_only)) # ground_truth contains classes for ALL nodes, includind test node
 
                 graph_test_node_list = list(G_test.nodes)
                 y_true.append(ground_truth_all[graph_test_node_list.index(self.data.test_nodes[i])])
@@ -2811,13 +2784,13 @@ class CommunityDetection:
         return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing)}
     
         
-    def run_community_detection(self, heuristic_name, masking):
+    def run_community_detection(self, heuristic_name):
         if heuristic_name == 'LabelPropagation':
             self.data = self.data.make_train_valid_test_datasets_with_numba(feature_type='one_hot', 
                                                                 model_type='homogeneous', 
                                                                 train_dataset_type='multiple', 
                                                                 test_dataset_type='multiple',
-                                                                masking=masking,
+                                                                masking=False,
                                                                 no_mask_class_in_df=True)
             return self.torch_geometric_label_propagation(1, 0.0001)
         elif heuristic_name == 'GirvanNewmann':
