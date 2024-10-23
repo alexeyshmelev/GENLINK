@@ -2361,7 +2361,6 @@ class CommunityDetection:
         skipped_nodes = 0
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Agglomerative clustering'):
-
             current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
             G_test_init = self.data.nx_graph.subgraph(current_nodes).copy()
             for c in nx.connected_components(G_test_init):
