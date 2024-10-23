@@ -100,7 +100,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             elif model_name in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
                 cols.append(color_model_scheme['Heuristics'])
                 hue_names.append('Heuristics')
-            elif model_name in ["Spectral clustering", "Agglomerative clustering", "Girvan-Newman", "Label propagation", "Relational neighbor classifier", "Multi-Rank-Walk", "Ridge regression"]:
+            elif model_name in ['AgglomerativeClustering', 'GirvanNewmann', 'LabelPropagation', 'MultiRankWalk', 'RelationalNeighborClassifier', 'RidgeRegression', 'SpectralClustering']:
                 cols.append(color_model_scheme['Community detection'])
                 hue_names.append('Community detection')
             else:

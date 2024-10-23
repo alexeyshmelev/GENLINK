@@ -12,7 +12,7 @@
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
     "batch_size":[10],
-    "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_no_mask",
+    "log_dir":"/mnt/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_no_mask",
     "patience":[10],
     "num_epochs":[10],
     "train_iterations_per_sample":[100],

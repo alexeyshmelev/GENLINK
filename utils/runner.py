@@ -249,15 +249,11 @@ class Runner:
                         else:
                             dataset = copy.deepcopy(self.datasets[dataset_name][s])
                         cd = CommunityDetection(dataset)
-                        if self.running_params['mask_size'] is not None:
-                            masking=True
-                        else:
-                            masking=False
-                        results = cd.run_community_detection(cd_model, masking)
+                        results = cd.run_community_detection(cd_model)
                         if not os.path.isdir(log_dir):
                             os.mkdir(log_dir)
                         with open(log_dir + f'/results.json', 'w') as f:
-                            results['model_name'] = heuristic
+                            results['model_name'] = cd_model
                             json.dump(results, f)
 
 

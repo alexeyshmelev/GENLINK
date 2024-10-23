@@ -1,5 +1,5 @@
 {
     "gnn":{},
     "heuristic":[],
-    "community_detection":["RelationalNeighborClassifier", "GirvanNewmann", "AgglomerativeClustering", "LabelPropagation", "SpectralClustering"]
+    "community_detection":["SpectralClustering", "RelationalNeighborClassifier", "AgglomerativeClustering", "LabelPropagation"]
 }
