@@ -1,5 +1,5 @@
 {
     "gnn":{},
-    "heuristic":[],
-    "community_detection":["SpectralClustering", "RelationalNeighborClassifier", "AgglomerativeClustering", "LabelPropagation"]
+    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "community_detection":[]
 }

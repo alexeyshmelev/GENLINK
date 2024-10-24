@@ -4,6 +4,7 @@ import seaborn as sns
 import pandas as pd
 import warnings
 import numpy as np
+from scipy.stats import wilcoxon, mannwhitneyu, ttest_ind, ttest_rel
 
 from os import listdir
 from os.path import isdir, join
@@ -52,8 +53,9 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             classifiers[tuple([name, ft])] = []
             classifiers[tuple([name, ft])].append(np.mean(metrics))
             classifiers[tuple([name, ft])].append(np.std(metrics))
+            classifiers[tuple([name, ft])].append(metrics)
 
-        classifier_names, means, std_devs, all_fts = [], [], [], []
+        classifier_names, means, std_devs, all_fts, all_metrics = [], [], [], [], []
         
         for name_ft, metrics in classifiers.items():
             name, ft = name_ft
@@ -61,6 +63,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             classifier_names.append(name)
             means.append(metrics[0])
             std_devs.append(metrics[1])
+            all_metrics.append(metrics[2])
 
         
         # Create a DataFrame for easier plotting with seaborn
@@ -69,7 +72,8 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             'Classifier': classifier_names,
             'Mean': np.round(means, 4),
             'StdDev': std_devs,
-            'feature_type': all_fts
+            'feature_type': all_fts,
+            'all_metrics': all_metrics
         })
 
         # Optionally sort the bars by their mean values
@@ -77,6 +81,19 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             df = df.sort_values('Mean', ascending=False)
 
         df = df.reset_index(drop=True)
+
+        all_pvalues = []
+        for i in range(df.shape[0]):
+            if i == 0:
+                all_pvalues.append(1)
+            else:
+                statistic, p_value = ttest_ind(df.iloc[0, 4], df.iloc[i, 4], equal_var=False)
+                all_pvalues.append(p_value)
+
+        n_tests = len(all_pvalues)
+        all_pvalues = [p * n_tests for p in all_pvalues]
+
+
 
         # print(df)
 
@@ -108,6 +125,31 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
                 hue_names.append('GNN one hot')
 
         bar_plot = sns.barplot(x=df.index, y=df.Mean, data=df, palette=color_model_scheme, hue=hue_names)  # , palette="viridis")
+
+        # Collect all bars from all containers
+        bars = []
+        for container in bar_plot.containers:
+            for bar in container:
+                bars.append(bar)
+
+        # Create a list of bars with their center x-positions
+        bars_with_x = [(bar, bar.get_x() + bar.get_width() / 2) for bar in bars]
+
+        # Sort the bars based on their x-position
+        sorted_bars_with_x = sorted(bars_with_x, key=lambda x: x[1])
+
+        # Extract the sorted bars
+        sorted_bars = [bar for bar, x in sorted_bars_with_x]
+
+        # Apply hatching to the first six bars as they appear in the plot
+        for i, bar in enumerate(sorted_bars):
+            if all_pvalues[i] > 0.05:
+                bar.set_hatch('//')
+                bar.set_edgecolor('red')
+                bar.set_linewidth(0)
+            # else:
+            #     print(all_pvalues[i])
+
         for i in range(len(bar_plot.containers)):
             bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=6)
         bar_plot.set_xticklabels(df.Classifier)
@@ -121,6 +163,9 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             # Optionally annotate the bars with the exact mean values
             if annotate:
                 bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=6)
+
+
+        
                 
         
         # for k, v in color_model_scheme.items():
@@ -140,6 +185,8 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
                 break
             else:
                 plt.setp(ax.get_xticklabels()[i], color='red', weight='bold')
+
+
         plt.legend()
         plt.tight_layout()  # Adjust the layout to make room for the rotated labels
         if fig_path is not None:
