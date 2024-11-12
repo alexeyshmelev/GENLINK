@@ -23,5 +23,7 @@
     "seed":42,
     "correct_and_smooth":null,
     "log_ibd":false,
-    "plot_cm":false
+    "plot_cm":false,
+    "use_class_balance_weight":true,
+    "save_dataset_stats":false
 }
