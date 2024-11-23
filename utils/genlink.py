@@ -205,6 +205,7 @@ class DataProcessor:
     
     def make_networkx_graph(self):
         G = nx.from_pandas_edgelist(self.df, source='node_id1', target='node_id2', edge_attr=['ibd_sum', 'ibd_n'])
+        assert type(G) is nx.classes.graph.Graph
         node_attr = dict()
         for i in range(self.node_classes_sorted.shape[0]):
             row = self.node_classes_sorted.iloc[i, :]
@@ -422,6 +423,28 @@ class DataProcessor:
     def addlabels(self, ax, x, y, t):
         for i in range(len(x)):
             ax.text(i, y[i] + 2 if t == 0 else y[i] + 20, y[i], ha = 'center', fontsize=8)
+
+    def get_simplified_graph_features(self, fig_path, fig_size, dataset_name=None):
+        graph_node_classes = nx.get_node_attributes(self.nx_graph, 'class')
+        class_counts = dict()
+        for k, v in graph_node_classes.items():
+            if self.class_to_int_mapping[v] not in class_counts.keys():
+                class_counts[self.class_to_int_mapping[v]] = 1
+            else:
+                class_counts[self.class_to_int_mapping[v]] += 1
+                
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.bar(range(len(class_counts.keys())), list(class_counts.values()), color='#253957')
+        ax.set_xticks(range(len(class_counts.keys())))
+        ax.set_xticklabels(class_counts.keys(), rotation = 90, ha='right')
+        self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()), 0)
+        ax.set_title(f'Class distribution ({dataset_name})')
+        ax.set_xlabel(f'Population groups')
+        ax.set_ylabel(f'Amount of nodes')
+        plt.savefig(f'{fig_path}num_nodes_per_classes_and_dataset.pdf', bbox_inches='tight')
+        plt.show()
+
+        
             
     def get_graph_features(self, fig_path, fig_size, picture_only=False, dataset_name=None):
         
@@ -1315,9 +1338,9 @@ class DataProcessor:
                 num_nodes = len(
                     pd.concat([real_connections_df['node_id1'], real_connections_df['node_id2']], axis=0).unique())
 
-                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean() - self.offset
+                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean()# - self.offset
                 if np.isnan(self.mean_weight[i, j]):
-                    self.mean_weight[i, j] = -self.offset #################### can be improved
+                    self.mean_weight[i, j] = np.nan #-self.offset #################### can be improved
 
                 if i == j:
                     all_possible_connections = num_nodes * (num_nodes - 1) / 2
@@ -1337,7 +1360,8 @@ class DataProcessor:
                 
     def plot_simulated_probs(self, save_path=None, dataset_name=None):
         fig, ax = plt.subplots(figsize=(6, 6))
-        sns.heatmap(self.edge_probs, xticklabels=self.classes, yticklabels=self.classes, annot=True, fmt='.4f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+        sns.heatmap(self.edge_probs, xticklabels=self.classes, yticklabels=self.classes, annot=True, fmt='.4f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax,
+                    annot_kws={"size": 7})
         ax.set_title(f'Edge probabilities ({dataset_name})', loc='center') # fontweight='bold'
         for i, tick_label in enumerate(ax.axes.get_yticklabels()):
             # tick_label.set_color("#008668")
@@ -1364,6 +1388,45 @@ class DataProcessor:
             plt.savefig(save_path)
         plt.show()
 
+
+    def plot_modularity_matrix(self, save_path=None, dataset_name=None):
+        class_to_nodes = {cls: [node for node, data in self.nx_graph.nodes(data=True) if data['class'] == self.classes.index(cls)] for cls in self.classes}
+
+        N = len(self.classes)
+        modularity_matrix = np.zeros((N, N))
+
+        # Calculate modularity for each pair of classes
+        for i, class_i in enumerate(self.classes):
+            for j, class_j in enumerate(self.classes):
+                if i != j:
+
+                    combined_nodes = class_to_nodes[class_i] + class_to_nodes[class_j]
+                    subgraph = self.nx_graph.subgraph(combined_nodes)
+                    # print(nx.number_connected_components(subgraph))
+
+                    # Compute modularity using NetworkX
+                    community_partition = [{node for node in class_to_nodes[class_i]},
+                                        {node for node in class_to_nodes[class_j]}]
+                    modularity = nx.community.modularity(subgraph, community_partition)
+
+                    # Store result in the matrix
+                    modularity_matrix[i, j] = modularity
+                else:
+                    modularity_matrix[i, j] = np.nan
+
+        fig, ax = plt.subplots(figsize=(6, 6))
+        sns.heatmap(modularity_matrix, xticklabels=self.classes, yticklabels=self.classes, annot=True, fmt='.4f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax,
+                    annot_kws={"size": 7})
+        ax.set_title(f'Modularity ({dataset_name})', loc='center') # fontweight='bold'
+        for i, tick_label in enumerate(ax.axes.get_yticklabels()):
+            # tick_label.set_color("#008668")
+            tick_label.set_fontsize("10")
+        for i, tick_label in enumerate(ax.axes.get_xticklabels()):
+            # tick_label.set_color("#008668")
+            tick_label.set_fontsize("10")
+        if save_path is not None:
+            plt.savefig(save_path)
+        plt.show()
     
 
     def generate_matrices(self, population_sizes):
@@ -1373,18 +1436,15 @@ class DataProcessor:
         simulate_graph_fn(self.classes, means, counts, pop_index, path)        
         # remove isolated nodes
         # G.remove_nodes_from(list(nx.isolates(G)))
-        
-    def get_stats(self):
-        pass
     
-    def plot_edge_weight_distribution(self, fig_size, save_path=None, custom_class_names=None, fontsize=8):
+    def plot_edge_weight_distribution(self, fig_size, dataset_name, title_pos, title_font_size, save_path=None, custom_class_names=None, fontsize=8):
         if custom_class_names is not None:
             classes = custom_class_names
         else:
             classes = self.classes
         img, axes = plt.subplots(len(classes), len(classes), figsize=fig_size)
         for i in range(len(classes)):
-            for j in range(len(classes)):
+            for j in range(len(classes)): 
                 weights = self.df.ibd_sum[((self.df.label_id1 == i) & (self.df.label_id2 == j)) | ((self.df.label_id1 == j) & (self.df.label_id2 == i))].to_numpy()
                 if len(weights) == 0:
                     axes[i][j].set_title(f'{classes[i]} x {classes[j]}', fontsize=fontsize)
@@ -1395,12 +1455,14 @@ class DataProcessor:
                     counts, bins, bars = axes[i][j].hist(weights, bins=final_num_bins, color='#69b3a2', edgecolor='white', linewidth=1.2, density=True)
                     axes[i][j].set_xlabel('edge weight')
                     axes[i][j].set_ylabel('probability')
-                    axes[i][j].set_title(f'{classes[i]} x {classes[j]}', fontsize=fontsize)
+                    axes[i][j].set_title(f'{classes[i]} x {classes[j]}\nMax: {np.round(np.max(weights), 2)}, Mean: {np.round(np.mean(weights), 2)}, SD: {np.round(np.std(weights), 2)}', fontsize=fontsize)
                     
                     points = np.linspace(np.min(weights), np.max(weights), final_num_bins)
                     str_lables_start = r'$\frac{1}{\lambda}$'
-                    axes[i][j].plot(bins[:-1] + (bins[1] - bins[0]) / 2, expon.pdf(points, loc=8.0, scale=np.mean(weights)), label=f'simulation, {str_lables_start}={np.round(np.mean(weights), 1)}', linestyle='--', marker='o', color='b')
+                    axes[i][j].plot(bins[:-1] + (bins[1] - bins[0]) / 2, expon.pdf(points, loc=8.0, scale=np.mean(weights)), label=f'exp dist approx, {str_lables_start}={np.round(np.mean(weights), 1)}', linestyle='--', marker='o', color='b')
                     axes[i][j].legend()
+        img.suptitle(f'{dataset_name} (Max: {np.round(np.max(self.df.ibd_sum), 2)}, Mean: {np.round(np.mean(self.df.ibd_sum), 2)}, SD: {np.round(np.std(self.df.ibd_sum), 2)})',
+                     y=title_pos, fontsize=title_font_size)
         if save_path is not None:
             plt.savefig(save_path)
         plt.show()
