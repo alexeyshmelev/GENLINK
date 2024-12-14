@@ -1370,7 +1370,7 @@ class DataProcessor:
             # tick_label.set_color("#008668")
             tick_label.set_fontsize("10")
         if save_path is not None:
-            plt.savefig(save_path)
+            plt.savefig(save_path, bbox_inches="tight")
         plt.show()
 
 
@@ -1385,7 +1385,7 @@ class DataProcessor:
             # tick_label.set_color("#008668")
             tick_label.set_fontsize("10")
         if save_path is not None:
-            plt.savefig(save_path)
+            plt.savefig(save_path, bbox_inches="tight")
         plt.show()
 
 
@@ -1425,7 +1425,7 @@ class DataProcessor:
             # tick_label.set_color("#008668")
             tick_label.set_fontsize("10")
         if save_path is not None:
-            plt.savefig(save_path)
+            plt.savefig(save_path, bbox_inches="tight")
         plt.show()
     
 
@@ -1464,7 +1464,7 @@ class DataProcessor:
         img.suptitle(f'{dataset_name} (Max: {np.round(np.max(self.df.ibd_sum), 2)}, Mean: {np.round(np.mean(self.df.ibd_sum), 2)}, SD: {np.round(np.std(self.df.ibd_sum), 2)})',
                      y=title_pos, fontsize=title_font_size)
         if save_path is not None:
-            plt.savefig(save_path)
+            plt.savefig(save_path, bbox_inches="tight")
         plt.show()
         
 
