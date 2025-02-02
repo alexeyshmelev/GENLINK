@@ -79,7 +79,7 @@ class Runner:
                                                                 train_dataset_type='multiple', 
                                                                 test_dataset_type='multiple',
                                                                 masking=masking,
-                                                                no_mask_class_in_df=True,
+                                                                no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
                                                                 log_edge_weights=self.running_params['log_ibd'])
             elif feature_type=='graph_based':
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
@@ -87,7 +87,7 @@ class Runner:
                                                                 train_dataset_type='one', 
                                                                 test_dataset_type='multiple',
                                                                 masking=masking,
-                                                                no_mask_class_in_df=True,
+                                                                no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
                                                                 log_edge_weights=self.running_params['log_ibd'])
             # select parameters for grid search
             curr_params = dict()
@@ -163,7 +163,7 @@ class Runner:
                     dataset_name += f'_sts_{sts}'
                 self.datasets[dataset_name] = dict()
                 for s in range(self.running_params['num_splits']):
-                    dataset = DataProcessor(path, dataset_name=dataset_name)
+                    dataset = DataProcessor(path, dataset_name=dataset_name, masked_nodes_in_df=self.running_params['no_mask_class_in_df'])
                     dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 
                                                                 valid_size=self.running_params['valid_size'], 
                                                                 test_size=self.running_params['test_size'], 
