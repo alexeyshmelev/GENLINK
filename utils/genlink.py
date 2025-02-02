@@ -171,7 +171,7 @@ def simulate_graph_fn(classes, means, counts, pop_index, path):
 
 
 class DataProcessor:
-    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None):
+    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None, masked_nodes_in_df=False):
         self.dataset_name: str = dataset_name
         self.train_size: float = None
         self.valid_size: float = None
@@ -196,6 +196,7 @@ class DataProcessor:
         self.array_of_graphs_for_validation = []
         self.array_of_graphs_for_testing = []
         self.disable_printing = disable_printing
+        self.masked_nodes_in_df = masked_nodes_in_df
         # self.rng = np.random.default_rng(42)
         
     def get_class_colors(self):
@@ -216,8 +217,8 @@ class DataProcessor:
     def get_classes(self, df):
         classes = pd.concat([df['label_id1'], df['label_id2']], axis=0).unique().tolist()
         if 'masked' in classes:
-            classes = classes + ['masked']
             classes.remove('masked')
+            classes = classes + ['masked'] # place it at the end
         return classes
 
     def get_unique_nodes(self, df):
@@ -262,73 +263,114 @@ class DataProcessor:
         return {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
         
     def generate_random_train_valid_test_nodes(self, train_size, valid_size, test_size, random_state, save_dir=None, mask_size=None, sub_train_size=None, keep_train_nodes=True, mask_random_state=None):
-        if train_size + valid_size + test_size != 1.0:
-            raise Exception("All sizes should add up to 1.0!")
-
-        if mask_size is not None and sub_train_size is not None:
-            assert mask_size <= 1.
-            assert sub_train_size < 1.
-        elif mask_size is None and sub_train_size is None:
-            pass
-        else:
-            raise Exception('Impossible parameter configuration!')
-
-        self.train_size = train_size
-        self.valid_size = valid_size
-        self.test_size = test_size
-        if mask_size is not None:
-            self.mask_size = mask_size
-            self.sub_train_size = sub_train_size
-        num_nodes_per_class = self.node_classes_sorted.iloc[:, 1].value_counts()
-        node_classes_random = self.node_classes_sorted.sample(frac=1, random_state=mask_random_state if (mask_size is not None) and keep_train_nodes else random_state)
-        self.train_nodes, self.valid_nodes, self.test_nodes = [], [], []
-        if mask_size is not None:
-            self.mask_nodes = []
-            train_nodes_for_mask_selection = []
-        node_counter = {i: 0 for i in range(num_nodes_per_class.shape[0])}
-        # print('NODE COUNTER SHAPE', len(node_counter))
-        # if mask_size is not None:
-        #     node_counter['masked_nodes'] = 0
-
-        for i in range(node_classes_random.shape[0]):
-            node_class = node_classes_random.iloc[i, 1]
-            if node_counter[node_class] <= int(self.train_size * num_nodes_per_class.loc[node_class]):
-                if self.mask_size is not None:
-                    if node_counter[node_class] <= int(self.sub_train_size * self.train_size * num_nodes_per_class.loc[node_class]):
-                        self.train_nodes.append(node_classes_random.iloc[i, 0])
-                    else:
-                        train_nodes_for_mask_selection.append(node_classes_random.iloc[i, 0])
-                else:
-                    self.train_nodes.append(node_classes_random.iloc[i, 0])
-                node_counter[node_class] += 1
-            elif int((self.train_size + self.valid_size) * num_nodes_per_class.loc[node_class]) >= node_counter[node_class] > int(self.train_size * num_nodes_per_class.loc[node_class]):
-                self.valid_nodes.append(node_classes_random.iloc[i, 0])
-                node_counter[node_class] += 1
-            else:
-                self.test_nodes.append(node_classes_random.iloc[i, 0])
-
-        if mask_size is not None:
-            node_classes_sorted_masks = self.node_classes_sorted.iloc[train_nodes_for_mask_selection, :].reset_index(drop=True)
-            node_classes_masks_random = node_classes_sorted_masks.sample(frac=1, random_state=random_state) # check that multible random state behevior
         
-            num_nodes_per_class_mask = node_classes_sorted_masks.iloc[:, 1].value_counts()
-            node_counter_mask = {i: 0 for i in range(num_nodes_per_class_mask.shape[0])}
-            for i in range(node_classes_masks_random.shape[0]):
-                node_class = node_classes_masks_random.iloc[i, 1]
-                if node_counter_mask[node_class] < int(self.mask_size * num_nodes_per_class_mask.loc[node_class]):
-                    self.mask_nodes.append(node_classes_masks_random.iloc[i, 0])
-                node_counter_mask[node_class] += 1
+        if not self.masked_nodes_in_df:
+            if train_size + valid_size + test_size != 1.0:
+                raise Exception("All sizes should add up to 1.0!")
 
-            if self.mask_size == 0.0:
-                assert len(self.mask_nodes) == 0
+            if mask_size is not None and sub_train_size is not None:
+                assert mask_size <= 1.
+                assert sub_train_size < 1.
+            elif mask_size is None and sub_train_size is None:
+                pass
+            else:
+                raise Exception('Impossible parameter configuration!')
 
-            if self.mask_size == 1.0:
-                assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
+            self.train_size = train_size
+            self.valid_size = valid_size
+            self.test_size = test_size
+            if mask_size is not None:
+                self.mask_size = mask_size
+                self.sub_train_size = sub_train_size
+            num_nodes_per_class = self.node_classes_sorted.iloc[:, 1].value_counts()
+            node_classes_random = self.node_classes_sorted.sample(frac=1, random_state=mask_random_state if (mask_size is not None) and keep_train_nodes else random_state)
+            self.train_nodes, self.valid_nodes, self.test_nodes = [], [], []
+            if mask_size is not None:
+                self.mask_nodes = []
+                train_nodes_for_mask_selection = []
+            node_counter = {i: 0 for i in range(num_nodes_per_class.shape[0])}
+            # print('NODE COUNTER SHAPE', len(node_counter))
+            # if mask_size is not None:
+            #     node_counter['masked_nodes'] = 0
 
-        if mask_size is not None:
-            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+            for i in range(node_classes_random.shape[0]):
+                node_class = node_classes_random.iloc[i, 1]
+                if node_counter[node_class] <= int(self.train_size * num_nodes_per_class.loc[node_class]):
+                    if self.mask_size is not None:
+                        if node_counter[node_class] <= int(self.sub_train_size * self.train_size * num_nodes_per_class.loc[node_class]):
+                            self.train_nodes.append(node_classes_random.iloc[i, 0])
+                        else:
+                            train_nodes_for_mask_selection.append(node_classes_random.iloc[i, 0])
+                    else:
+                        self.train_nodes.append(node_classes_random.iloc[i, 0])
+                    node_counter[node_class] += 1
+                elif int((self.train_size + self.valid_size) * num_nodes_per_class.loc[node_class]) >= node_counter[node_class] > int(self.train_size * num_nodes_per_class.loc[node_class]):
+                    self.valid_nodes.append(node_classes_random.iloc[i, 0])
+                    node_counter[node_class] += 1
+                else:
+                    self.test_nodes.append(node_classes_random.iloc[i, 0])
+
+            if mask_size is not None:
+                node_classes_sorted_masks = self.node_classes_sorted.iloc[train_nodes_for_mask_selection, :].reset_index(drop=True)
+                node_classes_masks_random = node_classes_sorted_masks.sample(frac=1, random_state=random_state) # check that multible random state behevior
+            
+                num_nodes_per_class_mask = node_classes_sorted_masks.iloc[:, 1].value_counts()
+                node_counter_mask = {i: 0 for i in range(num_nodes_per_class_mask.shape[0])}
+                for i in range(node_classes_masks_random.shape[0]):
+                    node_class = node_classes_masks_random.iloc[i, 1]
+                    if node_counter_mask[node_class] < int(self.mask_size * num_nodes_per_class_mask.loc[node_class]):
+                        self.mask_nodes.append(node_classes_masks_random.iloc[i, 0])
+                    node_counter_mask[node_class] += 1
+
+                if self.mask_size == 0.0:
+                    assert len(self.mask_nodes) == 0
+
+                if self.mask_size == 1.0:
+                    assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
+
+            if mask_size is not None:
+                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+            else:
+                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+
         else:
+            if train_size + valid_size + test_size != 1.0:
+                raise Exception("All sizes should add up to 1.0!")
+            
+            self.train_size = train_size
+            self.valid_size = valid_size
+            self.test_size = test_size
+
+
+            node_classes_sorted_general = self.node_classes_sorted[self.node_classes_sorted['class_id'] != self.classes.index('masked')]
+            node_classes_sorted_masked = self.node_classes_sorted[self.node_classes_sorted['class_id'] == self.classes.index('masked')]
+
+            assert self.node_classes_sorted.shape[0] > node_classes_sorted_general.shape[0]
+            assert self.node_classes_sorted.shape[0] > node_classes_sorted_masked.shape[0]
+
+            num_nodes_per_class = node_classes_sorted_general.iloc[:, 1].value_counts()
+
+            node_classes_random = node_classes_sorted_general.sample(frac=1, random_state=random_state)
+            self.train_nodes, self.valid_nodes, self.test_nodes, self.mask_nodes = [], [], [], node_classes_sorted_masked['node'].to_numpy().astype(int).tolist()
+
+            node_counter = {i: 0 for i in range(num_nodes_per_class.shape[0])}
+
+            assert len(node_counter) < len(self.classes)
+
+            for i in range(node_classes_random.shape[0]):
+                node_class = node_classes_random.iloc[i, 1]
+                if node_counter[node_class] <= int(self.train_size * num_nodes_per_class.loc[node_class]):
+                    self.train_nodes.append(node_classes_random.iloc[i, 0])
+                    node_counter[node_class] += 1
+                elif int((self.train_size + self.valid_size) * num_nodes_per_class.loc[node_class]) >= node_counter[node_class] > int(self.train_size * num_nodes_per_class.loc[node_class]):
+                    self.valid_nodes.append(node_classes_random.iloc[i, 0])
+                    node_counter[node_class] += 1
+                else:
+                    self.test_nodes.append(node_classes_random.iloc[i, 0])
+
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+
+
 
         if save_dir is not None:
             with open(save_dir + '/train.pickle', 'wb') as handle:
