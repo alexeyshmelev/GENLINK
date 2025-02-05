@@ -22,14 +22,15 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as mcm
 import torch.nn.functional as F
 from scipy.spatial.distance import squareform
-from torch.utils.data import TensorDataset, DataLoader
+# from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader
 from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import reverse_cuthill_mckee
 from sklearn.model_selection import KFold
 from torch.optim.lr_scheduler import StepLR
-from torch_geometric.loader import DataLoader
+# from torch_geometric.loader import DataLoader
 from sklearn.preprocessing import LabelEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -38,7 +39,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from scipy.stats import bernoulli, expon, norm, powerlaw, pearsonr
 from sklearn.model_selection import train_test_split
 from torch_geometric.utils.convert import from_networkx
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset, Data, Batch
 from torch_geometric.utils import one_hot
 from sklearn.semi_supervised import LabelPropagation, LabelSpreading
 from sklearn.cluster import SpectralClustering, AgglomerativeClustering
@@ -61,6 +62,40 @@ class NpEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return super(NpEncoder, self).default(obj)
+
+
+
+class FunctionList(list):
+    def __getitem__(self, index):
+        # Handle slices if needed
+        if isinstance(index, slice):
+            # Return a new list with each element processed
+            return [self[i] for i in range(*index.indices(len(self)))]
+        
+        # Get the tuple from the list normally
+        item = super().__getitem__(index)
+        
+        # Unpack the tuple into a function and its arguments
+        func, *args = item
+        
+        # Call the function with its arguments and return the result
+        return func(*args)
+    
+
+class GraphDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+    
+
+def collate_fn(data_list):
+    return Batch.from_data_list(data_list)
+
 
 
 def symmetrize(m):
@@ -171,7 +206,7 @@ def simulate_graph_fn(classes, means, counts, pop_index, path):
 
 
 class DataProcessor:
-    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None, masked_nodes_in_df=False):
+    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None, no_mask_class_in_df=True):
         self.dataset_name: str = dataset_name
         self.train_size: float = None
         self.valid_size: float = None
@@ -195,8 +230,12 @@ class DataProcessor:
         self.array_of_graphs_for_training = []
         self.array_of_graphs_for_validation = []
         self.array_of_graphs_for_testing = []
+        self.dict_node_classes = None
+        self.df_for_training = None
+        self.df_for_validation = None
+        self.df_for_training = None
         self.disable_printing = disable_printing
-        self.masked_nodes_in_df = masked_nodes_in_df
+        self.no_mask_class_in_df = no_mask_class_in_df
         # self.rng = np.random.default_rng(42)
         
     def get_class_colors(self):
@@ -259,12 +298,19 @@ class DataProcessor:
 
         return df_node_classes.sort_values(by=['node'])
 
-    def node_classes_to_dict(self):
-        return {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
+    def node_classes_to_dict(self, return_hashmap=False):
+        if return_hashmap:
+            node_classes = {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
+            node_classes_hashmap = np.zeros(len(node_classes)).astype(int)
+            for k, v in node_classes.items():
+                node_classes_hashmap[k] = v
+            return node_classes_hashmap
+        else:
+            return {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
         
     def generate_random_train_valid_test_nodes(self, train_size, valid_size, test_size, random_state, save_dir=None, mask_size=None, sub_train_size=None, keep_train_nodes=True, mask_random_state=None):
         
-        if not self.masked_nodes_in_df:
+        if self.no_mask_class_in_df:
             if train_size + valid_size + test_size != 1.0:
                 raise Exception("All sizes should add up to 1.0!")
 
@@ -345,6 +391,8 @@ class DataProcessor:
             node_classes_sorted_general = self.node_classes_sorted[self.node_classes_sorted['class_id'] != self.classes.index('masked')]
             node_classes_sorted_masked = self.node_classes_sorted[self.node_classes_sorted['class_id'] == self.classes.index('masked')]
 
+            # print('TEST TEST TEST', node_classes_sorted_masked)
+
             assert self.node_classes_sorted.shape[0] > node_classes_sorted_general.shape[0]
             assert self.node_classes_sorted.shape[0] > node_classes_sorted_masked.shape[0]
 
@@ -368,7 +416,7 @@ class DataProcessor:
                 else:
                     self.test_nodes.append(node_classes_random.iloc[i, 0])
 
-            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used (these are nodes without masks)')
 
 
 
@@ -994,21 +1042,34 @@ class DataProcessor:
 
         return hashmap
 
-    def make_one_hot_encoded_features(self, all_nodes, specific_nodes, hashmap, dict_node_classes, no_mask_class_in_df=None, mask_nodes=None):
+    def make_masked_node_hashmap(self):
+        if self.mask_nodes is None:
+            return np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
+        else:
+            hashmap = np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
+            all_nodes = self.node_classes_sorted['node'].to_numpy()
+            for node in self.mask_nodes:
+                hashmap[node] = True
+        
+        return hashmap
+
+    @staticmethod
+    @njit(cache=True)
+    def make_one_hot_encoded_features(all_nodes, specific_nodes, hashmap, dict_node_classes, classes, masked_node_hashmap, no_mask_class_in_df=None, mask_nodes=None):
         # order of features is the same as order nodes in self.nodes
         if mask_nodes is not None:
             if no_mask_class_in_df is None:
                 raise Exception('Impossible value for parameter!')
             elif no_mask_class_in_df:
-                num_classes = len(self.classes)
+                num_classes = len(classes)
             else:
-                num_classes = len(self.classes) - 1
+                num_classes = len(classes) - 1
         else:
-            num_classes = len(self.classes)
+            num_classes = len(classes)
         features = np.zeros((len(all_nodes), num_classes))
         for n in all_nodes:
             if mask_nodes is not None:
-                if n in mask_nodes:
+                if masked_node_hashmap[n]: #if n in mask_nodes:
                     features[hashmap[int(n)], :] = [1 / num_classes] * num_classes
                 elif n in specific_nodes:
                     features[hashmap[int(n)], :] = [1 / num_classes] * num_classes
@@ -1021,10 +1082,89 @@ class DataProcessor:
                     features[hashmap[int(n)], :] = [1 if i == dict_node_classes[n] else 0 for i in range(num_classes)]
 
         return features
+
+
+    @staticmethod
+    @njit(cache=True) # parallel=True work bad with DataLoader
+    def make_graph_based_features_ram_efficient(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights):
+        # Matrix counting the number of edges per node and class (float by default).
+        features_num_edges = np.zeros((num_nodes, num_classes))
+        
+        # Accumulators for sum of IBD, sum of squares, and count (float by default).
+        sum_ibd   = np.zeros((num_nodes, num_classes))
+        sumsq_ibd = np.zeros((num_nodes, num_classes))
+        count_ibd = np.zeros((num_nodes, num_classes))
+        
+        # This matrix will hold the mean and std per node/class.
+        features_ibd = np.zeros((num_nodes, num_classes * 2))
+        
+        for i in range(df.shape[0]):
+            row = df[i]
+            # row structure: [node0, node1, class_for_node1, class_for_node0, weight]
+            
+            if specific_masked_node_hashmap[int(row[0])] and not specific_masked_node_hashmap[int(row[1])]:
+                features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
+                value = -np.log2(row[4] / 6600) if log_edge_weights else row[4]
+              
+                idx = hashmap[int(row[0])]
+                cl = int(row[3])
+                sum_ibd[idx, cl]   += value
+                sumsq_ibd[idx, cl] += value * value
+                count_ibd[idx, cl] += 1
+
+            elif specific_masked_node_hashmap[int(row[1])] and not specific_masked_node_hashmap[int(row[0])]:
+                features_num_edges[hashmap[int(row[1])], int(row[2])] += 1
+                value = -np.log2(row[4] / 6600) if log_edge_weights else row[4]
+               
+                idx = hashmap[int(row[1])]
+                cl = int(row[2])
+                sum_ibd[idx, cl]   += value
+                sumsq_ibd[idx, cl] += value * value
+                count_ibd[idx, cl] += 1
+
+            elif specific_masked_node_hashmap[int(row[1])] and specific_masked_node_hashmap[int(row[0])]:
+                # Skip when both nodes are in specific_nodes.
+                continue
+
+            else:
+                # Normal case: both nodes are not in specific_nodes or only one is, 
+                # but doesn't match the above conditions.
+                features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
+                features_num_edges[hashmap[int(row[1])], int(row[2])] += 1
+                value = -np.log2(row[4] / 6600) if log_edge_weights else row[4]
+
+                idx0 = hashmap[int(row[0])]
+                cl0  = int(row[3])
+                sum_ibd[idx0, cl0]   += value
+                sumsq_ibd[idx0, cl0] += value * value
+                count_ibd[idx0, cl0] += 1
+
+                idx1 = hashmap[int(row[1])]
+                cl1  = int(row[2])
+                sum_ibd[idx1, cl1]   += value
+                sumsq_ibd[idx1, cl1] += value * value
+                count_ibd[idx1, cl1] += 1
+        
+        # Compute mean and std for each node and class.
+        for i in range(num_nodes): # prange work bad with DataLoader
+            for j in range(num_classes):
+                cnt = int(count_ibd[i, j])
+                if cnt != 0:
+                    mean_val = sum_ibd[i, j] / cnt
+                    features_ibd[i, j] = mean_val
+                    var_val = (sumsq_ibd[i, j] / cnt) - (mean_val * mean_val)
+                    features_ibd[i, num_classes + j] = var_val ** 0.5 if var_val > 0 else 0.0
+                else:
+                    features_ibd[i, j] = 0.0
+                    features_ibd[i, num_classes + j] = 0.0
+                    
+        # Concatenate the edge counts with the aggregated features.
+        return np.concatenate((features_num_edges, features_ibd), axis=1)
+
     
     @staticmethod
     @njit(cache=True, parallel=True)
-    def make_graph_based_features(df, hashmap, specific_nodes, num_classes, num_nodes, log_edge_weights):
+    def make_graph_based_features(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights):
         
         features_num_edges = np.zeros((num_nodes, num_classes))
         features_ibd_tmp = np.zeros((num_nodes, num_nodes, num_classes))
@@ -1032,13 +1172,13 @@ class DataProcessor:
         
         for i in range(df.shape[0]):
             row = df[i]
-            if int(row[0]) in specific_nodes and int(row[1]) not in specific_nodes: # check dulicated rows in initial df
+            if specific_masked_node_hashmap[int(row[0])] and not specific_masked_node_hashmap[int(row[1])]: # check dulicated rows in initial df
                 features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
                 features_ibd_tmp[hashmap[int(row[0])], hashmap[int(row[1])], int(row[3])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
-            elif int(row[1]) in specific_nodes and int(row[0]) not in specific_nodes:
+            elif specific_masked_node_hashmap[int(row[1])] and not specific_masked_node_hashmap[int(row[0])]:
                 features_num_edges[hashmap[int(row[1])], int(row[2])] += 1
                 features_ibd_tmp[hashmap[int(row[1])], hashmap[int(row[0])], int(row[2])] += -np.log2(row[4] / 6600) if log_edge_weights else row[4]
-            elif int(row[1]) in specific_nodes and int(row[0]) in specific_nodes:
+            elif specific_masked_node_hashmap[int(row[1])] and specific_masked_node_hashmap[int(row[0])]:
                 continue
             else:
                 features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
@@ -1059,13 +1199,15 @@ class DataProcessor:
                 
         return np.concatenate((features_num_edges, features_ibd), axis=1)
 
-    def construct_node_classes(self, nodes, dict_node_classes, mask=None):
+    @staticmethod
+    @njit(cache=True)
+    def construct_node_classes(nodes, dict_node_classes, masked_node_hashmap, mask=None):
         targets = []
         for node in nodes:
             if mask is None:
                 targets.append(dict_node_classes[node])
             else:
-                if node in mask:
+                if masked_node_hashmap[node]: # if node in mask:
                     targets.append(-1)
                 else:
                     targets.append(dict_node_classes[node])
@@ -1116,11 +1258,13 @@ class DataProcessor:
 
         return rows_for_adding_per_node
     
-    def get_mask(self, nodes, mask_nodes):
+    @staticmethod
+    @njit(cache=True)
+    def get_mask(nodes, mask_nodes, masked_node_hashmap):
         mask = []
         for node in nodes:
             if mask_nodes is not None:
-                if node in mask_nodes:
+                if masked_node_hashmap[node]: #if node in mask_nodes:
                     mask.append(False)
                 else:
                     mask.append(True)
@@ -1128,41 +1272,103 @@ class DataProcessor:
                 mask.append(True)
 
         return np.array(mask)
+    
+    def get_df_for_training(self):
+        return self.df_for_training.copy()
+    
+    def get_df_for_testing_or_validation(self, rows_for_adding):
+        return pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+    
+    def get_dict_node_classes(self):
+        return self.dict_node_classes
 
-    def generate_graph(self, curr_nodes, specific_node, dict_node_classes, df, log_edge_weights, feature_type, masking, no_mask_class_in_df):
+    def generate_graph(self, curr_nodes_data, specific_node, dict_node_classes_data, df_data, log_edge_weights, feature_type, masking, no_mask_class_in_df):
+
+
+        if isinstance(df_data, pd.DataFrame):
+            df = df_data.copy()
+        elif isinstance(df_data, list):
+            df = self.get_df_for_testing_or_validation(df_data)
+        else:
+            df = df_data()
+
+
+
+
+        if isinstance(dict_node_classes_data, np.ndarray):
+            dict_node_classes = dict_node_classes_data
+        else:
+            dict_node_classes = dict_node_classes_data()
+
+
+
+
+        if isinstance(curr_nodes_data, tuple):
+            if masking:
+                curr_nodes, _ = curr_nodes_data[0](self.train_nodes + self.mask_nodes, curr_nodes_data[1])
+            else:
+                curr_nodes, _ = curr_nodes_data[0](self.train_nodes, curr_nodes_data[1])
+        elif isinstance(curr_nodes_data, int) and curr_nodes_data != -1:
+            if masking:
+                curr_nodes = self.train_nodes + self.mask_nodes + [specific_node]
+            else:
+                curr_nodes = self.train_nodes + [specific_node]
+        elif curr_nodes_data == -1:
+            if masking:
+                curr_nodes = self.train_nodes + self.mask_nodes
+            else:
+                curr_nodes = self.train_nodes
+        else:
+            curr_nodes = curr_nodes_data[:]
+
+        masked_node_hashmap = self.make_masked_node_hashmap()            
+
         # numba.np.ufunc.parallel._is_initialized = False
         hashmap = self.make_hashmap(curr_nodes)
         if feature_type == 'one_hot':
             if masking:
-                features = self.make_one_hot_encoded_features(curr_nodes, [specific_node], hashmap,
-                                                              dict_node_classes, mask_nodes=self.mask_nodes, no_mask_class_in_df=no_mask_class_in_df)
+                features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
+                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap, mask_nodes=numba.typed.List(self.mask_nodes), no_mask_class_in_df=no_mask_class_in_df)
             else:
-                features = self.make_one_hot_encoded_features(curr_nodes, [specific_node], hashmap,
-                                                              dict_node_classes)
+                features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
+                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap)
             assert np.sum(np.array(features).sum(axis=1) == 0) == 0
         elif feature_type == 'graph_based':
+            specific_masked_node_hashmap = masked_node_hashmap.copy()
+            if specific_node != -1:
+                specific_masked_node_hashmap[specific_node] = True
             if masking:
-                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node] + self.mask_nodes), len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
+                # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
                 # node_mask = self.get_mask(curr_nodes, self.mask_nodes)
             else:
-                features = self.make_graph_based_features(df.to_numpy(), hashmap, numba.typed.List([specific_node]), len(self.classes), len(curr_nodes), log_edge_weights)
+                # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
         else:
             raise Exception('Such feature type is not known!')
-        targets = self.construct_node_classes(curr_nodes, dict_node_classes, self.mask_nodes)
+        
+        targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None)
         weighted_edges = self.construct_edges(df.to_numpy(), hashmap)
 
         # sort edges
-        node_mask = self.get_mask(curr_nodes, self.mask_nodes)
+        node_mask = self.get_mask(numba.typed.List(curr_nodes), numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None, masked_node_hashmap)
         sort_idx = np.lexsort((weighted_edges[:, 1], weighted_edges[:, 0]))
         weighted_edges = weighted_edges[sort_idx]
 
         # checking
         if feature_type == 'one_hot':
-            if not np.all(features[~node_mask] == 1 / len(self.classes)):
-                raise Exception('Not uniform distributions encountered for masked nodes!')
-            if not np.all(features[:-1][node_mask[:-1]] != 1 / len(self.classes)):
-                raise Exception('Uniform distributions encountered not for masked nodes!')
-            assert np.all(features[-1] == (1 / len(self.classes)))
+            if no_mask_class_in_df:
+                if not np.all(features[~node_mask] == 1 / len(self.classes)):
+                    raise Exception('Not uniform distributions encountered for masked nodes!')
+                if not np.all(features[:-1][node_mask[:-1]] != 1 / len(self.classes)):
+                    raise Exception('Uniform distributions encountered not for masked nodes!')
+                assert np.all(features[-1] == (1 / len(self.classes)))
+            else:
+                if not np.all(features[~node_mask] == 1 / (len(self.classes) - 1)):
+                    raise Exception('Not uniform distributions encountered for masked nodes!')
+                if not np.all(features[:-1][node_mask[:-1]] != 1 / (len(self.classes) - 1)):
+                    raise Exception('Uniform distributions encountered not for masked nodes!')
+                assert np.all(features[-1] == (1 / (len(self.classes) - 1)))
             
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
@@ -1178,23 +1384,28 @@ class DataProcessor:
 
         return graph
 
-    def make_train_valid_test_datasets_with_numba(self, feature_type, model_type, train_dataset_type, test_dataset_type, log_edge_weights=False, skip_train_val=False, masking=False, no_mask_class_in_df=True):
+    def make_train_valid_test_datasets_with_numba(self, feature_type, model_type, train_dataset_type, test_dataset_type, log_edge_weights=False, skip_train_val=False, masking=False, no_mask_class_in_df=True, make_ram_efficient_dataset=False):
 
-        self.array_of_graphs_for_training = []
-        self.array_of_graphs_for_testing = []
-        self.array_of_graphs_for_validation = []
+        if make_ram_efficient_dataset:
+            self.array_of_graphs_for_training = FunctionList([])
+            self.array_of_graphs_for_testing = FunctionList([])
+            self.array_of_graphs_for_validation = FunctionList([])
+        else:
+            self.array_of_graphs_for_training = []
+            self.array_of_graphs_for_testing = []
+            self.array_of_graphs_for_validation = []
         
         assert list(self.df.columns)[:5] == ['node_id1', 'node_id2', 'label_id1', 'label_id2', 'ibd_sum']
 
         if feature_type == 'one_hot' and model_type == 'homogeneous':
             if train_dataset_type == 'multiple' and test_dataset_type == 'multiple':
-                dict_node_classes = self.node_classes_to_dict()
-                df_for_training = self.df.copy()
+                self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
+                self.df_for_training = self.df.copy()
                 if masking:
                     drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
                 else:
                     drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
-                df_for_training = df_for_training.drop(drop_rows)
+                self.df_for_training = self.df_for_training.drop(drop_rows)
 
                 # make training samples
                 if not skip_train_val:
@@ -1204,11 +1415,17 @@ class DataProcessor:
                         else:
                             curr_train_nodes, specific_node = self.place_specific_node_to_the_end(self.train_nodes, k)
 
-                        graph = self.generate_graph(curr_train_nodes, specific_node, dict_node_classes, df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                        
-                        assert graph.x.shape[0] == len(curr_train_nodes)
+                        if make_ram_efficient_dataset:
 
-                        self.array_of_graphs_for_training.append(graph)
+                            self.array_of_graphs_for_training.append((self.generate_graph, (self.place_specific_node_to_the_end, k), specific_node, self.get_dict_node_classes, self.get_df_for_training, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(curr_train_nodes, specific_node, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(curr_train_nodes)
+
+                            self.array_of_graphs_for_training.append(graph)
 
                 # make validation samples
                 if not skip_train_val:
@@ -1222,9 +1439,9 @@ class DataProcessor:
                                                                                        np.array(self.valid_nodes))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
                         rows_for_adding = rows_for_adding_per_node[k]
-                        df_for_validation = pd.concat([df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+                        df_for_validation = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
 
-                        if df_for_validation.shape[0] == df_for_training.shape[0]:
+                        if df_for_validation.shape[0] == self.df_for_training.shape[0]:
                             if not self.disable_printing:
                                 print('Isolated val node found! Restart with different seed or this node will be ignored.')
                             continue
@@ -1235,11 +1452,17 @@ class DataProcessor:
                         else:
                             current_valid_nodes = self.train_nodes + [specific_node]
 
-                        graph = self.generate_graph(current_valid_nodes, specific_node, dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                        
-                        assert graph.x.shape[0] == len(current_valid_nodes)
+                        if make_ram_efficient_dataset:
 
-                        self.array_of_graphs_for_validation.append(graph)
+                            self.array_of_graphs_for_validation.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(current_valid_nodes, specific_node, self.dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(current_valid_nodes)
+
+                            self.array_of_graphs_for_validation.append(graph)
 
                 # make testing samples
                 if masking:
@@ -1252,9 +1475,9 @@ class DataProcessor:
                                                                                    np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
                     rows_for_adding = rows_for_adding_per_node[k]
-                    df_for_testing = pd.concat([df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+                    df_for_testing = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
 
-                    if df_for_testing.shape[0] == df_for_training.shape[0]:
+                    if df_for_testing.shape[0] == self.df_for_training.shape[0]:
                         if not self.disable_printing:
                             print('Isolated test node found! Restart with different seed or this node will be ignored.')
                         continue
@@ -1265,21 +1488,27 @@ class DataProcessor:
                     else:
                         current_test_nodes = self.train_nodes + [specific_node]
 
-                    graph = self.generate_graph(current_test_nodes, specific_node, dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                    
-                    assert graph.x.shape[0] == len(current_test_nodes)
+                    if make_ram_efficient_dataset:
 
-                    self.array_of_graphs_for_testing.append(graph)
+                        self.array_of_graphs_for_testing.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+                    
+                    else:
+
+                        graph = self.generate_graph(current_test_nodes, specific_node, self.dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                        
+                        assert graph.x.shape[0] == len(current_test_nodes)
+
+                        self.array_of_graphs_for_testing.append(graph)
 
         elif feature_type == 'graph_based' and model_type == 'homogeneous':
             if train_dataset_type == 'one' and test_dataset_type == 'multiple':
-                dict_node_classes = self.node_classes_to_dict()
-                df_for_training = self.df.copy()
+                self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
+                self.df_for_training = self.df.copy()
                 if masking:
                     drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
                 else:
                     drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
-                df_for_training = df_for_training.drop(drop_rows)
+                self.df_for_training = self.df_for_training.drop(drop_rows)
 
                 # make training samples
                 if not skip_train_val:
@@ -1290,11 +1519,17 @@ class DataProcessor:
                         else:
                             current_train_nodes = self.train_nodes
 
-                        graph = self.generate_graph(current_train_nodes, -1, dict_node_classes, df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                        
-                        assert graph.x.shape[0] == len(current_train_nodes)
+                        if make_ram_efficient_dataset:
 
-                        self.array_of_graphs_for_training.append(graph)
+                            self.array_of_graphs_for_training.append((self.generate_graph, -1, -1, self.get_dict_node_classes, self.get_df_for_training, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(current_train_nodes, -1, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(current_train_nodes)
+
+                            self.array_of_graphs_for_training.append(graph)
 
                 # make validation samples
                 if not skip_train_val:
@@ -1309,9 +1544,9 @@ class DataProcessor:
                                                                                            np.array(self.valid_nodes))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
                         rows_for_adding = rows_for_adding_per_node[k]
-                        df_for_validation = pd.concat([df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+                        df_for_validation = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
 
-                        if df_for_validation.shape[0] == df_for_training.shape[0]:
+                        if df_for_validation.shape[0] == self.df_for_training.shape[0]:
                             if not self.disable_printing:
                                 print('Isolated val node found! Restart with different seed or this node will be ignored.')
                             continue
@@ -1322,13 +1557,19 @@ class DataProcessor:
                         else:
                             current_valid_nodes = self.train_nodes + [specific_node] # important to place specific_node in the end
 
-                        graph = self.generate_graph(current_valid_nodes, specific_node, dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                        
-                        assert graph.x.shape[0] == len(current_valid_nodes)
-                        assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
-                        assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+                        if make_ram_efficient_dataset:
 
-                        self.array_of_graphs_for_validation.append(graph)
+                            self.array_of_graphs_for_validation.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(current_valid_nodes, specific_node, self.dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(current_valid_nodes)
+                            assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
+                            assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+
+                            self.array_of_graphs_for_validation.append(graph)
 
                 # make testing samples
                 if masking:
@@ -1341,9 +1582,9 @@ class DataProcessor:
                                                                                        np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
                     rows_for_adding = rows_for_adding_per_node[k]
-                    df_for_testing = pd.concat([df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+                    df_for_testing = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
 
-                    if df_for_testing.shape[0] == df_for_training.shape[0]:
+                    if df_for_testing.shape[0] == self.df_for_training.shape[0]:
                         if not self.disable_printing:
                             print('Isolated test node found! Restart with different seed or this node will be ignored.')
                         continue
@@ -1354,13 +1595,19 @@ class DataProcessor:
                     else:
                         current_test_nodes = self.train_nodes + [specific_node] # important to place specific_node in the end
 
-                    graph = self.generate_graph(current_test_nodes, specific_node, dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
-                    
-                    assert graph.x.shape[0] == len(current_test_nodes)
-                    assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
-                    assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+                    if make_ram_efficient_dataset:
 
-                    self.array_of_graphs_for_testing.append(graph)
+                        self.array_of_graphs_for_testing.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+                    
+                    else:
+
+                        graph = self.generate_graph(current_test_nodes, specific_node, self.dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                        
+                        assert graph.x.shape[0] == len(current_test_nodes)
+                        assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
+                        assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+
+                        self.array_of_graphs_for_testing.append(graph)
 
         else:
             raise Exception('No such method for graph generation')
@@ -1899,7 +2146,7 @@ class NullSimulator:
 
 
 class Trainer:
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0):
         self.data = data
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
@@ -1912,13 +2159,22 @@ class Trainer:
             self.weight = torch.tensor([1. for i in range(len(self.data.classes)-1)]).to(self.device) if weight is None else weight
         else:
             self.weight = torch.tensor([1. for i in range(len(self.data.classes))]).to(self.device) if weight is None else weight
-        if use_class_balance_weight and no_mask_class_in_df:
-            print('Using loss weights according to class balance')
-            all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
-            count_dict = Counter(all_classes)
-            count_dict = dict(sorted(count_dict.items()))
-            self.weight = torch.tensor(list(count_dict.values())).to(self.device)
-            self.weight = torch.max(self.weight) / self.weight
+        if use_class_balance_weight:
+            if no_mask_class_in_df:
+                print('Using loss weights according to class balance')
+                all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
+                count_dict = Counter(all_classes)
+                count_dict = dict(sorted(count_dict.items()))
+                self.weight = torch.tensor(list(count_dict.values())).to(self.device)
+                self.weight = torch.max(self.weight) / self.weight
+            else:
+                print('Using loss weights according to class balance excluding masked class')
+                all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
+                all_classes = all_classes[all_classes != self.data.classes.index('masked')]
+                count_dict = Counter(all_classes)
+                count_dict = dict(sorted(count_dict.items()))
+                self.weight = torch.tensor(list(count_dict.values())).to(self.device)
+                self.weight = torch.max(self.weight) / self.weight
         self.batch_size = batch_size # not used by far
         self.log_dir = log_dir
         self.patience = patience
@@ -1935,6 +2191,7 @@ class Trainer:
         self.correct_and_smooth = correct_and_smooth
         self.remove_saved_model_after_testing = remove_saved_model_after_testing
         self.plot_cm = plot_cm
+        self.num_workers = num_workers
             
         self.post = CorrectAndSmooth(num_correction_layers=2, correction_alpha=0.9,
                         num_smoothing_layers=1, smoothing_alpha=0.0001,
@@ -1944,53 +2201,74 @@ class Trainer:
         y_true = []
         y_pred = []
 
+        dataset = GraphDataset(graphs)
+        loader = DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False, collate_fn=collate_fn)
+        pbar = tqdm(range(len(dataset)), desc='Compute metrics', disable=self.disable_printing)
+
         if self.feature_type == 'one_hot':
-            for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
-                if self.correct_and_smooth:
-                    y_soft = F.softmax(self.model(graphs[i].to(self.device)), dim=-1).detach()
-                    y_soft = self.post.correct(y_soft, graphs[i].y[graphs[i].correct_and_smooth_mask], graphs[i].correct_and_smooth_mask, graphs[i].edge_index, graphs[i].weight.float())
-                    y_soft = self.post.smooth(y_soft, graphs[i].y[graphs[i].correct_and_smooth_mask], graphs[i].correct_and_smooth_mask, graphs[i].edge_index, graphs[i].weight.float())
-                    p = y_soft[-1].cpu().detach().numpy()
-                    y_pred.append(np.argmax(p))
-                    y_true.append(int(graphs[i].y[-1].cpu().detach().numpy()))
-                    graphs[i].to('cpu')
-                else:
-                    p = F.softmax(self.model(graphs[i].to(self.device))[-1], dim=0).cpu().detach().numpy()
-                    y_pred.append(np.argmax(p))
-                    y_true.append(int(graphs[i].y[-1].cpu().detach().numpy()))
-                    graphs[i].to('cpu')
+            # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+            for batch in loader:
+                batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                for sample in batch:
+
+                    if self.correct_and_smooth:
+                        y_soft = F.softmax(self.model(sample), dim=-1).detach()
+                        y_soft = self.post.correct(y_soft, sample.y[sample.correct_and_smooth_mask], sample.correct_and_smooth_mask, sample.edge_index, sample.weight.float())
+                        y_soft = self.post.smooth(y_soft, sample.y[sample.correct_and_smooth_mask], sample.correct_and_smooth_mask, sample.edge_index, sample.weight.float())
+                        p = y_soft[-1].cpu().detach().numpy()
+                        y_pred.append(np.argmax(p))
+                        y_true.append(int(sample.y[-1].cpu().detach().numpy()))
+                        # graphs[i].to('cpu')
+                    else:
+                        p = F.softmax(self.model(sample)[-1], dim=0).cpu().detach().numpy()
+                        y_pred.append(np.argmax(p))
+                        y_true.append(int(sample.y[-1].cpu().detach().numpy()))
+                        # graphs[i].to('cpu')
+
+                    pbar.update(1)
         elif self.feature_type == 'graph_based':
             if not mask:
-                for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
-                    if phase=='training':
-                        p = F.softmax(self.model(graphs[i].to(self.device)),
-                                      dim=0).cpu().detach().numpy()
-                        y_pred = np.argmax(p, axis=1)
-                        y_true = graphs[i].y.cpu().detach()
-                    elif phase=='scoring':
-                        p = F.softmax(self.model(graphs[i].to(self.device))[-1],
-                                      dim=0).cpu().detach().numpy()
-                        y_pred.append(np.argmax(p))
-                        y_true.append(graphs[i].y[-1].cpu().detach())
-                    else:
-                        raise Exception('No such phase!')
-                    graphs[i].to('cpu')
+                # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+                for batch in loader:
+                    batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                    for sample in batch:
+                        if phase=='training':
+                            p = F.softmax(self.model(sample),
+                                        dim=0).cpu().detach().numpy()
+                            y_pred = np.argmax(p, axis=1)
+                            y_true = sample.y.cpu().detach()
+                        elif phase=='scoring':
+                            p = F.softmax(self.model(sample)[-1],
+                                        dim=0).cpu().detach().numpy()
+                            y_pred.append(np.argmax(p))
+                            y_true.append(sample.y[-1].cpu().detach())
+                        else:
+                            raise Exception('No such phase!')
+                        # graphs[i].to('cpu')
+                        pbar.update(1)
             else:
-                for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
-                    if phase=='training':
-                        p = F.softmax(self.model(graphs[i].to(self.device)),
-                                      dim=0)
-                        p = p[graphs[i].mask].cpu().detach().numpy()
-                        y_pred = np.argmax(p, axis=1)
-                        y_true = graphs[i].y[graphs[i].mask].cpu().detach()
-                    elif phase=='scoring':
-                        p = F.softmax(self.model(graphs[i].to(self.device))[-1],
-                                      dim=0).cpu().detach().numpy()
-                        y_pred.append(np.argmax(p))
-                        y_true.append(graphs[i].y[-1].cpu().detach().numpy().item())
-                    else:
-                        raise Exception('No such phase!')
-                    graphs[i].to('cpu')
+                # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+                for batch in loader:
+                    batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                    for sample in batch:
+                        if phase=='training':
+                            p = F.softmax(self.model(sample.to(self.device)),
+                                        dim=0)
+                            p = p[sample.mask].cpu().detach().numpy()
+                            y_pred = np.argmax(p, axis=1)
+                            y_true = sample.y[sample.mask].cpu().detach()
+                        elif phase=='scoring':
+                            p = F.softmax(self.model(sample.to(self.device))[-1],
+                                        dim=0).cpu().detach().numpy()
+                            y_pred.append(np.argmax(p))
+                            y_true.append(sample.y[-1].cpu().detach().numpy().item())
+                        else:
+                            raise Exception('No such phase!')
+                        # graphs[i].to('cpu')
+                        pbar.update(1)
         else:
             raise Exception('Trainer is not implemented for such feature type name while calculating training scores!')
 
@@ -2001,7 +2279,7 @@ class Trainer:
         #     assert False
         return y_true, y_pred
 
-    def evaluation(self, i, mask=False):
+    def evaluation(self, mask=False):
         self.model.eval()
 
         y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_validation, mask=mask, phase='scoring')
@@ -2137,29 +2415,48 @@ class Trainer:
                 for i in tqdm(range(self.num_epochs), desc='Training epochs', disable=self.disable_printing):
                     if self.patience_counter == self.patience:
                         break
-                    self.evaluation(i)
+                    self.evaluation()
 
                     self.model.train()
 
-                    selector = np.array([i for i in range(len(self.data.array_of_graphs_for_training))])
-                    np.random.shuffle(selector)
+                    # selector = np.array([i for i in range(len(self.data.array_of_graphs_for_training))])
+                    # np.random.shuffle(selector)
+
+                    train_dataset = GraphDataset(self.data.array_of_graphs_for_training)
+                    train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True, collate_fn=collate_fn)
 
                     mean_epoch_loss = []
 
-                    pbar = tqdm(range(len(selector)), desc='Training samples', disable=self.disable_printing)
+                    pbar = tqdm(range(len(train_dataset)), desc='Training samples', disable=self.disable_printing)
                     pbar.set_postfix({'val_best_score': self.max_f1_score_macro})
-                    for j, data_curr in enumerate(pbar):
-                        n = selector[j]
-                        data_curr = self.data.array_of_graphs_for_training[n].to(self.device)
-                        optimizer.zero_grad()
-                        out = self.model(data_curr)
-                        # print(data_curr.x.shape, out[-1], data_curr.y[-1])
-                        loss = criterion(out[-1], data_curr.y[-1])
-                        loss.backward()
-                        mean_epoch_loss.append(loss.detach().cpu().numpy())
-                        optimizer.step()
-                        scheduler.step()
-                        self.data.array_of_graphs_for_training[n].to('cpu')
+
+                    for train_batch in train_loader:
+                        train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+
+                        for sample in train_batch:
+                            optimizer.zero_grad()
+                            out = self.model(sample)
+                            # print(data_curr.x.shape, out[-1], data_curr.y[-1])
+                            loss = criterion(out[-1], sample.y[-1])
+                            loss.backward()
+                            mean_epoch_loss.append(loss.detach().cpu().numpy())
+                            optimizer.step()
+                            scheduler.step()
+                            pbar.update(1)
+
+
+                    # for j, data_curr in enumerate(pbar):
+                    #     n = selector[j]
+                    #     data_curr = self.data.array_of_graphs_for_training[n].to(self.device)
+                    #     optimizer.zero_grad()
+                    #     out = self.model(data_curr)
+                    #     # print(data_curr.x.shape, out[-1], data_curr.y[-1])
+                    #     loss = criterion(out[-1], data_curr.y[-1])
+                    #     loss.backward()
+                    #     mean_epoch_loss.append(loss.detach().cpu().numpy())
+                    #     optimizer.step()
+                    #     scheduler.step()
+                    #     self.data.array_of_graphs_for_training[n].to('cpu')
                         
                     if not self.disable_printing:
                         print(f'Mean loss: {np.mean(mean_epoch_loss)}')
@@ -2172,25 +2469,25 @@ class Trainer:
                     
             elif self.feature_type == 'graph_based':
                 if self.masking:
-                    data_curr = self.data.array_of_graphs_for_training[0].to(self.device)
+                    data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
                     self.model.train()
                     for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
                         if self.patience_counter == self.patience:
                             break
                         if i % self.evaluation_steps == 0:
+                            self.data.array_of_graphs_for_training[0].to('cpu')
                             y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
 
                             if not self.disable_printing:
                                 print('Training report')
                                 print(classification_report(y_true, y_pred))
 
-                            self.data.array_of_graphs_for_training[0].to('cpu')
-                            self.evaluation(i, mask=True)
+                            self.evaluation(mask=True)
                             self.model.train()
                             self.data.array_of_graphs_for_training[0].to(self.device)
 
                         optimizer.zero_grad()
-                        out = self.model(data_curr)
+                        out = self.model(data_curr.to(self.device))
                         # print(self.model.fc1.weight)
                         # assert False
                         # print(data_curr.x[data_curr.mask].detach().cpu().numpy().sum())
@@ -2201,25 +2498,25 @@ class Trainer:
                         optimizer.step()
                         scheduler.step()
                 else:
-                    data_curr = self.data.array_of_graphs_for_training[0].to(self.device)
+                    data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
                     self.model.train()
                     for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
                         if self.patience_counter == self.patience:
                             break
                         if i % self.evaluation_steps == 0:
+                            self.data.array_of_graphs_for_training[0].to('cpu')
                             y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
 
                             if not self.disable_printing:
                                 print('Training report')
                                 print(classification_report(y_true, y_pred))
 
-                            self.data.array_of_graphs_for_training[0].to('cpu')
-                            self.evaluation(i)
+                            self.evaluation()
                             self.model.train()
                             self.data.array_of_graphs_for_training[0].to(self.device)
 
                         optimizer.zero_grad()
-                        out = self.model(data_curr)
+                        out = self.model(data_curr.to(self.device))
                         loss = criterion(out, data_curr.y)
                         loss.backward()
                         optimizer.step()

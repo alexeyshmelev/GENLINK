@@ -1,5 +1,5 @@
 {
-    "gnn":{"GL_GATConv_3l_512h":["one_hot", "graph_based"],
+    "gnn":{"GL_GATConv_3l_512h":["graph_based","one_hot"],
            "GL_GATConv_3l_128h":["one_hot", "graph_based"],
            "GL_GATConv_9l_512h":["one_hot", "graph_based"],
            "GL_GATConv_9l_128h":["one_hot", "graph_based"],

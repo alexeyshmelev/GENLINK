@@ -68,27 +68,29 @@ class Runner:
             #                                                 keep_train_nodes=self.running_params['keep_train_nodes'], 
             #                                                 mask_random_state=self.running_params['mask_random_state'])
             
-            if self.running_params['mask_size'] is not None:
-                masking=True
-            else:
-                masking=False
+            # if self.running_params['mask_size'] is not None:
+            #     masking=True
+            # else:
+            #     masking=False
 
             if feature_type=='one_hot':
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                 model_type='homogeneous', 
                                                                 train_dataset_type='multiple', 
                                                                 test_dataset_type='multiple',
-                                                                masking=masking,
+                                                                masking=self.running_params['masking'],
                                                                 no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
-                                                                log_edge_weights=self.running_params['log_ibd'])
+                                                                log_edge_weights=self.running_params['log_ibd'],
+                                                                make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
             elif feature_type=='graph_based':
                 dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                 model_type='homogeneous', 
                                                                 train_dataset_type='one', 
                                                                 test_dataset_type='multiple',
-                                                                masking=masking,
+                                                                masking=self.running_params['masking'],
                                                                 no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
-                                                                log_edge_weights=self.running_params['log_ibd'])
+                                                                log_edge_weights=self.running_params['log_ibd'],
+                                                                make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
             # select parameters for grid search
             curr_params = dict()
             curr_params['lr'] = self.running_params['lr']
@@ -127,10 +129,11 @@ class Runner:
                                 seed=self.running_params['seed'], 
                                 save_model_in_ram=False, 
                                 correct_and_smooth=self.running_params['correct_and_smooth'], 
-                                no_mask_class_in_df=True,
+                                no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
                                 remove_saved_model_after_testing=True,
                                 plot_cm=self.running_params['plot_cm'],
-                                use_class_balance_weight=self.running_params['use_class_balance_weight'])
+                                use_class_balance_weight=self.running_params['use_class_balance_weight'],
+                                num_workers=self.running_params['num_workers'])
                 results = trainer.run()
 
                 if results['f1_macro'] >= max_f1_macro_score:
@@ -163,7 +166,7 @@ class Runner:
                     dataset_name += f'_sts_{sts}'
                 self.datasets[dataset_name] = dict()
                 for s in range(self.running_params['num_splits']):
-                    dataset = DataProcessor(path, dataset_name=dataset_name, masked_nodes_in_df=self.running_params['no_mask_class_in_df'])
+                    dataset = DataProcessor(path, dataset_name=dataset_name, no_mask_class_in_df=self.running_params['no_mask_class_in_df'], disable_printing=self.running_params['disable_printing'])
                     dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 
                                                                 valid_size=self.running_params['valid_size'], 
                                                                 test_size=self.running_params['test_size'], 
@@ -197,6 +200,7 @@ class Runner:
             # if len(self.gnn_models):
                 # with get_context("spawn").Pool(len(self.device) * self.models_per_gpu) as p:
                 #     _ = list(tqdm(p.imap(self.gpu_runner_core, explist), total=len(explist), desc='Running training pipeline'))
+
             list_of_processes = []
             global shared_explist
             shared_explist = Array('i', [0] * len(explist), lock=True)
