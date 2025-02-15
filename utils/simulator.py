@@ -23,12 +23,14 @@ if __name__ == '__main__':
     with open(args.simulation_params, 'r') as f:
         simulation_params = json.load(f)
 
-    if simulation_params['type'] == 'non_diagonal_edge_prob_change' or simulation_params['type'] == 'equal_probs' or simulation_params['type'] == 'prob_decreaser':
+    if simulation_params['type'] == 'non_diagonal_edge_prob_change' or simulation_params['type'] == 'equal_probs' or simulation_params['type'] == 'prob_decreaser' or simulation_params['type'] == 'maxed_equal_class_balance' or simulation_params['type'] == 'class_balance_interpolation':
         for f in data_files:
-            if simulation_params['prob_boost'] is not None:
+            if 'prob_boost' in simulation_params.keys() and simulation_params['prob_boost'] is not None:
                 global_iterator = simulation_params['prob_boost']
-            elif simulation_params['edge_prob_drop'] is not None:
+            elif 'edge_prob_drop' in simulation_params.keys() and simulation_params['edge_prob_drop'] is not None:
                 global_iterator = simulation_params['edge_prob_drop']
+            elif 'num_interpolation_steps' in simulation_params.keys() and simulation_params['num_interpolation_steps'] is not None:
+                global_iterator = range(simulation_params['num_interpolation_steps']+1)
             else:
                 global_iterator = range(1)
 
@@ -38,8 +40,9 @@ if __name__ == '__main__':
                 dp.compute_simulation_params()
 
                 pop_sizes = []
+                real_pop_sizes = dp.node_classes_sorted.iloc[:, 1].value_counts()
                 for i in range(len(dp.classes)):
-                    pop_sizes.append(dp.node_classes_sorted.iloc[:, 1].value_counts().loc[i])
+                    pop_sizes.append(real_pop_sizes.loc[i])
 
                 if simulation_params['type'] == 'non_diagonal_edge_prob_change':
                     new_edge_prob = dp.edge_probs.copy()
@@ -51,6 +54,22 @@ if __name__ == '__main__':
                 elif simulation_params['type'] == 'prob_decreaser':
                     new_edge_prob = dp.edge_probs.copy()
                     new_edge_prob = new_edge_prob * iterator_item
+                elif simulation_params['type'] == 'maxed_equal_class_balance':
+                    new_edge_prob = dp.edge_probs.copy()
+                    pop_sizes = [np.max(pop_sizes)] * len(pop_sizes)
+                elif simulation_params['type'] == 'class_balance_interpolation':
+                    new_edge_prob = dp.edge_probs.copy()
+                    back_sort = np.argsort(np.argsort(pop_sizes))
+                    old_pop_sizes = np.array(pop_sizes).copy()
+                    pop_sizes = np.linspace(np.min(pop_sizes) + (np.max(pop_sizes) - np.min(pop_sizes)) / (len(global_iterator)-1) * iterator_item, np.max(pop_sizes), len(pop_sizes)).astype(int)[back_sort]
+
+                    assert np.max(old_pop_sizes) == np.max(pop_sizes)
+                    if iterator_item == 0:
+                        assert np.min(old_pop_sizes) == np.min(pop_sizes)
+                    assert len(old_pop_sizes) == len(pop_sizes)
+                    if iterator_item == (len(global_iterator)-1):
+                        assert np.all(np.max(old_pop_sizes) == np.array(pop_sizes))
+
 
                 ns = NullSimulator(len(pop_sizes), np.nan_to_num(new_edge_prob), dp.mean_weight)
                 counts, means, pop_index = ns.generate_matrices(np.array(pop_sizes), np.random.default_rng(args.random_state))
@@ -62,6 +81,10 @@ if __name__ == '__main__':
                     new_file_name = f.split('/')[-1].split('.')[0] + f'_all_probs_{simulation_params["equal_edge_prob_value"]}.csv'
                 elif simulation_params['type'] == 'prob_decreaser':
                     new_file_name = f.split('/')[-1].split('.')[0] + f'_decreased_by_0_{int(iterator_item*100)}.csv'
+                elif simulation_params['type'] == 'maxed_equal_class_balance':
+                    new_file_name = f.split('/')[-1].split('.')[0] + f'_maxed_equal_class_balance.csv'
+                elif simulation_params['type'] == 'class_balance_interpolation':
+                    new_file_name = f.split('/')[-1].split('.')[0] + f'_class_balance_interpolation_step_{iterator_item}.csv'
                 
 
                 ns.simulate_graph(means, counts, pop_index, join(args.destination_folder, new_file_name))

@@ -1250,8 +1250,7 @@ class DataProcessor:
             tmp = []
             for j in range(df.shape[0]):
                 row = df[j]
-                if int(row[0]) == non_train_nodes[i] and int(row[1]) in train_nodes or int(row[1]) == non_train_nodes[i] and int(
-                        row[0]) in train_nodes:
+                if int(row[0]) == non_train_nodes[i] and int(row[1]) in train_nodes or int(row[1]) == non_train_nodes[i] and int(row[0]) in train_nodes:
                     tmp.append(j)
 
             rows_for_adding_per_node.append(tmp)

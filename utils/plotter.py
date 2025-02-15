@@ -5,6 +5,7 @@ import pandas as pd
 import warnings
 import numpy as np
 from scipy.stats import wilcoxon, mannwhitneyu, ttest_ind, ttest_rel
+import os
 
 from os import listdir
 from os.path import isdir, join
@@ -16,43 +17,45 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
     if dataset_plot_only is not None:
         all_dataset_dirs = (np.array(all_dataset_dirs)[np.array(all_dataset_dirs) == dataset_plot_only]).tolist()
 
-    all_dataset_stats = [f for f in listdir(join(data_path, 'dataset_stats')) if isdir(join(join(data_path, 'dataset_stats'), f))]
-    results = dict()
-    for dataset_dir in all_dataset_stats:
-        all_splits_per_dataset_path = join(join(data_path, 'dataset_stats'), dataset_dir)
-        all_dirs = [f for f in listdir(all_splits_per_dataset_path) if isdir(join(all_splits_per_dataset_path, f))]
+    if os.path.isdir(join(data_path, 'dataset_stats')):
 
-        for dir_path in all_dirs:
-            with open(join(join(join(data_path, 'dataset_stats'), dataset_dir), dir_path+'/stats.json'), 'r') as f:
-                curr_stat = json.load(f)
-                if dataset_dir not in results.keys():
-                    results[dataset_dir] = [curr_stat['number_connected_components']]
-                else:
-                    results[dataset_dir].append(curr_stat['number_connected_components'])
+        all_dataset_stats = [f for f in listdir(join(data_path, 'dataset_stats')) if isdir(join(join(data_path, 'dataset_stats'), f))]
+        results = dict()
+        for dataset_dir in all_dataset_stats:
+            all_splits_per_dataset_path = join(join(data_path, 'dataset_stats'), dataset_dir)
+            all_dirs = [f for f in listdir(all_splits_per_dataset_path) if isdir(join(all_splits_per_dataset_path, f))]
 
-    stats_dataset_name, stats_dataset_mean, stats_dataset_std = [], [], []
-    for dataset_name, stats in results.items():
-        stats_dataset_name.append(dataset_name)
-        stats_dataset_mean.append(np.mean(stats))
-        stats_dataset_std.append(np.std(stats))
+            for dir_path in all_dirs:
+                with open(join(join(join(data_path, 'dataset_stats'), dataset_dir), dir_path+'/stats.json'), 'r') as f:
+                    curr_stat = json.load(f)
+                    if dataset_dir not in results.keys():
+                        results[dataset_dir] = [curr_stat['number_connected_components']]
+                    else:
+                        results[dataset_dir].append(curr_stat['number_connected_components'])
 
-    df = pd.DataFrame({
-            'Dataset name': stats_dataset_name,
-            'Number of components': np.round(stats_dataset_mean, 4),
-            'std': stats_dataset_std
-        })
+        stats_dataset_name, stats_dataset_mean, stats_dataset_std = [], [], []
+        for dataset_name, stats in results.items():
+            stats_dataset_name.append(dataset_name)
+            stats_dataset_mean.append(np.mean(stats))
+            stats_dataset_std.append(np.std(stats))
 
-    sns.set_theme()
-    stats_bar_plot = sns.barplot(x='Dataset name', y='Number of components', data=df, color='#05F140')
-    for i, (mean, std) in enumerate(zip(df['Number of components'], df['std'])):
-            stats_bar_plot.errorbar(i, mean, yerr=std, fmt='none', c='black', capsize=5)
+        df = pd.DataFrame({
+                'Dataset name': stats_dataset_name,
+                'Number of components': np.round(stats_dataset_mean, 4),
+                'std': stats_dataset_std
+            })
 
-            # Optionally annotate the bars with the exact mean values
-            if annotate:
-                stats_bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=6)
+        sns.set_theme()
+        stats_bar_plot = sns.barplot(x='Dataset name', y='Number of components', data=df, color='#05F140')
+        for i, (mean, std) in enumerate(zip(df['Number of components'], df['std'])):
+                stats_bar_plot.errorbar(i, mean, yerr=std, fmt='none', c='black', capsize=5)
 
-    plt.xticks(rotation=90, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=10)
-    plt.show()
+                # Optionally annotate the bars with the exact mean values
+                if annotate:
+                    stats_bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=6)
+
+        plt.xticks(rotation=90, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=10)
+        plt.show()
 
     for dataset_dir in all_dataset_dirs:
         all_models_per_dataset_path = join(data_path, dataset_dir)
@@ -190,7 +193,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             #     print(all_pvalues[i])
 
         for i in range(len(bar_plot.containers)):
-            bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=6)
+            bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=10) # fontsize=6
         bar_plot.set_xticklabels(df.Classifier)
         # print(bar_plot.containers[0])
         
@@ -201,7 +204,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
 
             # Optionally annotate the bars with the exact mean values
             if annotate:
-                bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=6)
+                bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=10) # fontsize=6
 
 
         
