@@ -2460,11 +2460,11 @@ class Trainer:
                     if not self.disable_printing:
                         print(f'Mean loss: {np.mean(mean_epoch_loss)}')
 
-                    y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training)
+                    # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training)
 
-                    if not self.disable_printing:
-                        print('Training report')
-                        print(classification_report(y_true, y_pred))
+                    # if not self.disable_printing:
+                    #     print('Training report')
+                    #     print(classification_report(y_true, y_pred))
                     
             elif self.feature_type == 'graph_based':
                 if self.masking:
@@ -2475,11 +2475,11 @@ class Trainer:
                             break
                         if i % self.evaluation_steps == 0:
                             self.data.array_of_graphs_for_training[0].to('cpu')
-                            y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
+                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
 
-                            if not self.disable_printing:
-                                print('Training report')
-                                print(classification_report(y_true, y_pred))
+                            # if not self.disable_printing:
+                            #     print('Training report')
+                            #     print(classification_report(y_true, y_pred))
 
                             self.evaluation(mask=True)
                             self.model.train()
@@ -2504,11 +2504,11 @@ class Trainer:
                             break
                         if i % self.evaluation_steps == 0:
                             self.data.array_of_graphs_for_training[0].to('cpu')
-                            y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
+                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
 
-                            if not self.disable_printing:
-                                print('Training report')
-                                print(classification_report(y_true, y_pred))
+                            # if not self.disable_printing:
+                            #     print('Training report')
+                            #     print(classification_report(y_true, y_pred))
 
                             self.evaluation()
                             self.model.train()
