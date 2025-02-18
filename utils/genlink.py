@@ -12,9 +12,12 @@ from tqdm import tqdm
 import seaborn as sns
 import networkx as nx
 import torch.nn as nn
+import matplotlib as mpl
 from sklearn import metrics
 from multiprocessing import Pool
 from collections import OrderedDict, Counter
+from torch_geometric.utils import to_networkx
+import matplotlib.colors as colors
 import numba
 from numba import njit, prange
 # numba.config.THREADING_LAYER = 'workqueue'
@@ -218,6 +221,7 @@ class DataProcessor:
         self.offset = 6.0
         self.df = path if is_path_object else pd.read_csv(path)
         self.node_names_to_int_mapping: dict[str, int] = self.get_node_names_to_int_mapping(self.get_unique_nodes(self.df))
+        self.int_to_node_names_mapping = {v:k for k, v in self.node_names_to_int_mapping.items()}
         self.classes: list[str] = self.get_classes(self.df)
         self.node_classes_sorted: pd.DataFrame = self.get_node_classes(self.df)
         self.class_to_int_mapping: dict[int, str] = {i:n for i, n in enumerate(self.classes)}
@@ -251,6 +255,10 @@ class DataProcessor:
             row = self.node_classes_sorted.iloc[i, :]
             node_attr[row[0]] = {'class':row[1]}
         nx.set_node_attributes(G, node_attr)
+
+        mask = {node:{'mask':(cls != self.classes.index('masked')) if 'masked' in self.classes else True} for node, cls in nx.get_node_attributes(G,'class').items()}
+        nx.set_node_attributes(G, mask)
+
         return G
         
     def get_classes(self, df):
@@ -1755,6 +1763,147 @@ class DataProcessor:
             plt.savefig(save_path, bbox_inches="tight")
         plt.show()
         
+
+    def truncate_colormap(self, cmap, minval=0.0, maxval=1.0, n=100):
+        new_cmap = colors.LinearSegmentedColormap.from_list(
+            'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+            cmap(np.linspace(minval, maxval, n)))
+        return new_cmap
+
+    def visualisze_initial_graph(self, id_of_node_to_draw_neighbours_for=None, figsize_in_px=1200, base_node_size=24, selected_node_size=150, plot_node_labels=True, plot_real_node_labels=False, node_labels_size=8, node_label_font_color='white', legend_size=10, save_path=None):
+        if id_of_node_to_draw_neighbours_for is not None:
+            node_neighbors = list(self.nx_graph.neighbors(id_of_node_to_draw_neighbours_for)) + [id_of_node_to_draw_neighbours_for]
+            graph = nx.subgraph(self.nx_graph, node_neighbors) # seems like it's not creating copy of graph
+        else:
+            graph = self.nx_graph.copy()
+
+        cmap = mpl.colormaps['jet']
+        px = 1 / plt.rcParams['figure.dpi']
+        colors = cmap(np.linspace(0, 1, len(np.unique(self.classes))))
+
+        pos = nx.spring_layout(graph, iterations=10)
+        plt.clf()
+        fig, ax = plt.subplots(1, 1, figsize=(figsize_in_px * px, figsize_in_px * px))
+        ax.axis('off')
+        ax.set_title(f'Whole initial graph' if id_of_node_to_draw_neighbours_for is None else f'Neighbours of node {id_of_node_to_draw_neighbours_for} in initial graph')
+
+        y = list(nx.get_node_attributes(graph,'class').values())
+        mask = np.array(list(nx.get_node_attributes(graph,'mask').values()))
+
+        real_node_colors = []
+
+        for cls in y:
+            real_node_colors.append(colors[cls])
+
+        if np.sum(~mask) == 0:
+            nx.draw_networkx_nodes(graph, pos=pos, node_color=real_node_colors, node_size=[base_node_size if node != id_of_node_to_draw_neighbours_for else selected_node_size for node in graph.nodes], ax=ax)
+        else:
+            assert np.all(np.array(list(graph)) == np.array(list(graph.nodes)))
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[mask], node_color=np.array(real_node_colors)[mask], node_size=[base_node_size if node != id_of_node_to_draw_neighbours_for else selected_node_size for node in np.array(list(graph))[mask]], ax=ax)
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[~mask], node_shape='s', node_color=np.array(real_node_colors)[~mask], node_size=[base_node_size if node != id_of_node_to_draw_neighbours_for else selected_node_size for node in np.array(list(graph))[~mask]], ax=ax)
+        
+        edges, weights = zip(*nx.get_edge_attributes(graph,'ibd_sum').items())
+
+        new_cmap = self.truncate_colormap(plt.cm.Blues, 0.2, 1.0)
+        nx.draw_networkx_edges(graph, pos=pos, alpha=0.5, width=1, edge_cmap=new_cmap, edge_color=weights, ax=ax)
+
+        if plot_node_labels:
+            if plot_real_node_labels:
+                int_to_node_name_mapping = {i:n for n, i in self.node_names_to_int_mapping.items()}
+                nx.draw_networkx_labels(graph, pos, labels={node: str(int_to_node_name_mapping[node]) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax)
+            else:
+                nx.draw_networkx_labels(graph, pos, labels={node: str(node) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax)
+
+        for i, clr in enumerate(colors):
+            ax.scatter([],[], c=clr, label=f'{self.class_to_int_mapping[i]}')
+
+        ax.legend(prop={'size': legend_size})
+
+        if save_path is not None:
+            plt.savefig(save_path, bbox_inches="tight")
+
+        plt.show()
+
+
+
+    def visualize_predictions(self, model, test_graph, data_processor, use_component=False):
+        preds = np.argmax(F.softmax(model(test_graph), dim=1).cpu().detach().numpy(), axis=-1)
+        
+        # print(test_graph.y[-1], preds[-1])
+        
+        graph = to_networkx(test_graph, edge_attrs=['weight'], node_attrs=['y', 'mask'], to_undirected=True)
+        print(f'Number of initial nodes: {len(graph)}')
+        last_node_id = len(graph)-1
+        pred_attrs = {i:{'predict':p} for i, p in enumerate(preds)}
+        nx.set_node_attributes(graph, pred_attrs)
+        
+        if use_component:
+            print(f'Number of connected components:{nx.number_connected_components(graph)}')
+            for c in nx.connected_components(graph):
+                if len(graph)-1 in c:
+                    test_node_neighbors = list(c)
+                    break
+        else:
+            test_node_neighbors = list(graph.neighbors(len(graph)-1)) + [len(graph)-1]
+        # # print(test_node_neighbors)
+        # preds = preds[test_node_neighbors]
+        # y = test_graph.y.cpu().detach().numpy()[test_node_neighbors]
+        
+        graph = nx.subgraph(graph, test_node_neighbors)
+        print(f'Number of final nodes: {len(graph)}')
+        # print(graph.nodes, test_node_neighbors)
+        # assert np.all(np.array(list(graph.nodes)) == np.array(test_node_neighbors))
+        node_classes = data_processor.classes
+        
+        cmap = mpl.colormaps['jet']
+        px = 1 / plt.rcParams['figure.dpi']
+        colors = cmap(np.linspace(0, 1, len(np.unique(node_classes))))
+
+        pos = nx.spring_layout(graph, iterations=10)
+        plt.clf()
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(1200 * px, 600 * px))
+        ax1.axis('off')
+        ax2.axis('off')
+        ax2.set_title(f'Ground truth')
+        ax1.set_title(f'Prediction')
+        
+        y = list(nx.get_node_attributes(graph,'y').values())
+        mask = np.array(list(nx.get_node_attributes(graph,'mask').values()))
+        preds = list(nx.get_node_attributes(graph,'predict').values())
+
+        current_node_colors = []
+        real_node_colors = []
+
+        for cls in y:
+            real_node_colors.append(colors[cls])
+        
+        for cls in preds:
+            current_node_colors.append(colors[cls])
+        # print(preds, y, graph.nodes)
+        # assert preds[list(graph.nodes).index(last_node_id)] == y[list(graph.nodes).index(last_node_id)]
+        if np.sum(~mask) == 0:
+            nx.draw_networkx_nodes(graph, pos=pos, node_color=current_node_colors, node_size=[24 if node != last_node_id else 150 for node in graph.nodes], ax=ax1)
+        else:
+            print('Using masks')
+            assert np.all(np.array(list(graph)) == np.array(list(graph.nodes)))
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[mask], node_color=np.array(current_node_colors)[mask], node_size=[24 if node != last_node_id else 150 for node in np.array(list(graph))[mask]], ax=ax1)
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[~mask], node_shape='s', node_color=np.array(current_node_colors)[~mask], node_size=[24 if node != last_node_id else 150 for node in np.array(list(graph))[~mask]], ax=ax1)
+        nx.draw_networkx_nodes(graph, pos=pos, node_color=real_node_colors, node_size=[24 if node != last_node_id else 150 for node in graph.nodes], ax=ax2)
+        
+        edges, weights = zip(*nx.get_edge_attributes(graph,'weight').items())
+
+        new_cmap = self.truncate_colormap(plt.cm.Blues, 0.2, 1.0)
+        nx.draw_networkx_edges(graph, pos=pos, alpha=0.5, width=1, edge_cmap=new_cmap, edge_color=weights, ax=ax1)
+        nx.draw_networkx_edges(graph, pos=pos, alpha=0.5, width=1, edge_cmap=new_cmap, edge_color=weights, ax=ax2)
+
+        for i, clr in enumerate(colors):
+            ax1.scatter([],[], c=clr, label=f'{data_processor.class_to_int_mapping[i]}')
+            ax2.scatter([],[], c=clr, label=f'{data_processor.class_to_int_mapping[i]}')
+
+        ax1.legend(prop={'size': 6})
+        ax2.legend(prop={'size': 6})
+
+        plt.show()
 
 
 class Heuristics:
