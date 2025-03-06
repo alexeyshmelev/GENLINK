@@ -8,6 +8,7 @@ import random
 import itertools
 import numpy as np
 import pandas as pd
+import torch.nn.functional
 from tqdm import tqdm
 import seaborn as sns
 import networkx as nx
@@ -383,9 +384,9 @@ class DataProcessor:
                     assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
 
             if mask_size is not None:
-                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes))}) of all nodes in dataset were used to create splits (if not 100% then some artificially masked nodes were not used)')
             else:
-                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
+                print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes))}) of all nodes in dataset were used to create splits (no masked nodes assumed)')
 
         else:
             if train_size + valid_size + test_size != 1.0:
@@ -424,7 +425,7 @@ class DataProcessor:
                 else:
                     self.test_nodes.append(node_classes_random.iloc[i, 0])
 
-            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used (these are nodes without masks)')
+            print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes))}) of all nodes in dataset were labeled (these are nodes without real masks), there were ({len(self.mask_nodes)}) masked nodes')
 
 
 
@@ -435,71 +436,44 @@ class DataProcessor:
                 pickle.dump(self.valid_nodes, handle, protocol=pickle.HIGHEST_PROTOCOL)
             with open(save_dir + '/test.pickle', 'wb') as handle:
                 pickle.dump(self.test_nodes, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-    def load_train_valid_test_nodes(self, train_path, valid_path, test_path, data_type, mask_path=None):
-        if data_type == 'pickle':
-            with open(train_path, 'rb') as handle:
-                self.train_nodes = pickle.load(handle)
-            with open(valid_path, 'rb') as handle:
-                self.valid_nodes = pickle.load(handle)
-            with open(test_path, 'rb') as handle:
-                self.test_nodes = pickle.load(handle)
-        if data_type == 'torch':
-            self.train_nodes = torch.load(train_path).tolist()
-            self.valid_nodes = torch.load(valid_path).tolist()
-            self.test_nodes = torch.load(test_path).tolist()
-        if data_type == 'numpy':
-            self.train_nodes = [self.node_names_to_int_mapping[f'node_{node}'] for node in train_path] # for numpy it is not a path, it is actual array
-            self.valid_nodes = [self.node_names_to_int_mapping[f'node_{node}'] for node in valid_path]
-            self.test_nodes = [self.node_names_to_int_mapping[f'node_{node}'] for node in test_path]
-            if mask_path is not None:
-                for mask_node in mask_path:
-                    if f'node_{mask_node}' not in self.node_names_to_int_mapping.keys():
-                        if not self.disable_printing:
-                            print(f'Adding isolated masked node {mask_node}')
-                        self.node_names_to_int_mapping[f'node_{mask_node}'] = len(self.node_names_to_int_mapping)
-                        self.node_classes_sorted = pd.concat([self.node_classes_sorted, pd.DataFrame([[self.node_names_to_int_mapping[f'node_{mask_node}'], self.classes.index('masked')]], columns=['node', 'class_id'])], axis=0)
-                        self.node_classes_sorted = self.node_classes_sorted.sort_values(by=['node'])
-                self.mask_nodes = [self.node_names_to_int_mapping[f'node_{node}'] for node in mask_path]
-                self.train_nodes = list(filter(lambda node: node not in self.mask_nodes, self.train_nodes))
-                self.valid_nodes = list(filter(lambda node: node not in self.mask_nodes, self.valid_nodes))
-                self.test_nodes = list(filter(lambda node: node not in self.mask_nodes, self.test_nodes))
-                
-                # for node in train_path:
-                #     if node in self.mask_nodes:
-                #         print('Removing mask node from train nodes')
-                #         self.mask_nodes.remove(node)
-                
-                for node in valid_path:
-                    if node in self.mask_nodes:
-                        if not self.disable_printing:
-                            print('Removing mask node from validation nodes')
-                        self.mask_nodes.remove(node)
-                        
-                for node in test_path:
-                    if node in self.mask_nodes:
-                        if not self.disable_printing:
-                            print('Removing mask node from test nodes')
-                        self.mask_nodes.remove(node)
-            
             if self.mask_nodes is not None:
-                assert len(self.mask_nodes) > 0
-                assert len(set(self.train_nodes) & set(self.mask_nodes)) == 0
-            assert len(self.train_nodes) > 0
-            assert len(self.valid_nodes) > 0
-            assert len(self.test_nodes) > 0
-                
+                with open(save_dir + '/mask.pickle', 'wb') as handle:
+                    pickle.dump(self.mask_nodes, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+    def load_partitions(self, train_socket, valid_socket, test_socket, mask_socket=None):
+
+        if self.mask_size is None:
+            assert mask_socket is None
+
+        print('Warning: we do not check class balance here! Provided splits will be used as is.')
+
+        self.train_nodes = [self.node_names_to_int_mapping[node] for node in train_socket]
+        self.valid_nodes = [self.node_names_to_int_mapping[node] for node in valid_socket]
+        self.test_nodes = [self.node_names_to_int_mapping[node] for node in test_socket]
+        if mask_socket is not None:
+            self.mask_nodes = [self.node_names_to_int_mapping[node] for node in mask_socket]
             
-        # if data_type == 'object':
-        #     self.train_nodes = train_path
-        #     self.valid_nodes = valid_path
-        #     self.test_nodes = test_path
+        
+        if self.mask_nodes is not None:
+            assert len(self.mask_nodes) > 0
+            assert len(set(self.train_nodes) & set(self.mask_nodes)) == 0
+        assert len(self.train_nodes) > 0
+        # assert len(self.valid_nodes) > 0
+        assert len(self.test_nodes) > 0
+                
 
         if not (type(self.train_nodes) == list and type(self.valid_nodes) == list and type(self.test_nodes) == list):
             raise Exception('Node ids must be stored in Python lists!')
+        elif self.mask_nodes is not None:
+            if not (type(self.train_nodes) == list and type(self.valid_nodes) == list and type(self.test_nodes) == list and type(self.mask_nodes) == list):
+                raise Exception('Node ids must be stored in Python lists!')
+        
         if len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) < (len(self.train_nodes) + len(self.valid_nodes) + len(self.test_nodes)):
-            print('There is intersection between train, valid and test node sets!') 
+            print('There is intersection between train, valid and test node sets!')
+        elif self.mask_nodes is not None:
+            if len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) < (len(self.train_nodes) + len(self.valid_nodes) + len(self.test_nodes) + len(self.mask_nodes)):
+                print('There is intersection between train, valid, test and mask node sets!')
             
     def number_of_multi_edges(self, G):
         s = []
@@ -1826,12 +1800,16 @@ class DataProcessor:
 
 
 
-    def visualize_predictions(self, model, test_graph, data_processor, use_component=False):
+    def visualize_predictions(self, model, test_graph, test_node, node_labels_size, node_label_font_color, base_node_size=24, selected_node_size=150, node_labels=None, use_component=False):
         preds = np.argmax(F.softmax(model(test_graph), dim=1).cpu().detach().numpy(), axis=-1)
         
         # print(test_graph.y[-1], preds[-1])
         
         graph = to_networkx(test_graph, edge_attrs=['weight'], node_attrs=['y', 'mask'], to_undirected=True)
+        all_current_nodes = self.train_nodes + [test_node]
+        rg = nx.subgraph(self.nx_graph, all_current_nodes)
+        # assert np.all(np.array(list(graph.nodes)) == np.array(list(range(len(graph.nodes)))))
+        assert nx.vf2pp_is_isomorphic(graph, rg)
         print(f'Number of initial nodes: {len(graph)}')
         last_node_id = len(graph)-1
         pred_attrs = {i:{'predict':p} for i, p in enumerate(preds)}
@@ -1853,7 +1831,7 @@ class DataProcessor:
         print(f'Number of final nodes: {len(graph)}')
         # print(graph.nodes, test_node_neighbors)
         # assert np.all(np.array(list(graph.nodes)) == np.array(test_node_neighbors))
-        node_classes = data_processor.classes
+        node_classes = self.classes
         
         cmap = mpl.colormaps['jet']
         px = 1 / plt.rcParams['figure.dpi']
@@ -1882,13 +1860,13 @@ class DataProcessor:
         # print(preds, y, graph.nodes)
         # assert preds[list(graph.nodes).index(last_node_id)] == y[list(graph.nodes).index(last_node_id)]
         if np.sum(~mask) == 0:
-            nx.draw_networkx_nodes(graph, pos=pos, node_color=current_node_colors, node_size=[24 if node != last_node_id else 150 for node in graph.nodes], ax=ax1)
+            nx.draw_networkx_nodes(graph, pos=pos, node_color=current_node_colors, node_size=[base_node_size if node != last_node_id else selected_node_size for node in graph.nodes], ax=ax1)
         else:
             print('Using masks')
             assert np.all(np.array(list(graph)) == np.array(list(graph.nodes)))
-            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[mask], node_color=np.array(current_node_colors)[mask], node_size=[24 if node != last_node_id else 150 for node in np.array(list(graph))[mask]], ax=ax1)
-            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[~mask], node_shape='s', node_color=np.array(current_node_colors)[~mask], node_size=[24 if node != last_node_id else 150 for node in np.array(list(graph))[~mask]], ax=ax1)
-        nx.draw_networkx_nodes(graph, pos=pos, node_color=real_node_colors, node_size=[24 if node != last_node_id else 150 for node in graph.nodes], ax=ax2)
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[mask], node_color=np.array(current_node_colors)[mask], node_size=[base_node_size if node != last_node_id else selected_node_size for node in np.array(list(graph))[mask]], ax=ax1)
+            nx.draw_networkx_nodes(graph, pos=pos, nodelist=np.array(list(graph))[~mask], node_shape='s', node_color=np.array(current_node_colors)[~mask], node_size=[base_node_size if node != last_node_id else selected_node_size for node in np.array(list(graph))[~mask]], ax=ax1)
+        nx.draw_networkx_nodes(graph, pos=pos, node_color=real_node_colors, node_size=[base_node_size if node != last_node_id else selected_node_size for node in graph.nodes], ax=ax2)
         
         edges, weights = zip(*nx.get_edge_attributes(graph,'weight').items())
 
@@ -1896,9 +1874,17 @@ class DataProcessor:
         nx.draw_networkx_edges(graph, pos=pos, alpha=0.5, width=1, edge_cmap=new_cmap, edge_color=weights, ax=ax1)
         nx.draw_networkx_edges(graph, pos=pos, alpha=0.5, width=1, edge_cmap=new_cmap, edge_color=weights, ax=ax2)
 
+        if node_labels == 'dataset':
+            nx.draw_networkx_labels(graph, pos, labels={node: str(all_current_nodes[node]) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax1)
+            nx.draw_networkx_labels(graph, pos, labels={node: str(all_current_nodes[node]) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax2)
+        elif node_labels == 'real':
+            nx.draw_networkx_labels(graph, pos, labels={node: str(self.int_to_node_names_mapping[all_current_nodes[node]]) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax1)
+            nx.draw_networkx_labels(graph, pos, labels={node: str(self.int_to_node_names_mapping[all_current_nodes[node]]) for node in graph.nodes}, font_size=node_labels_size, font_color=node_label_font_color, ax=ax2)
+
+
         for i, clr in enumerate(colors):
-            ax1.scatter([],[], c=clr, label=f'{data_processor.class_to_int_mapping[i]}')
-            ax2.scatter([],[], c=clr, label=f'{data_processor.class_to_int_mapping[i]}')
+            ax1.scatter([],[], c=clr, label=f'{self.class_to_int_mapping[i]}')
+            ax2.scatter([],[], c=clr, label=f'{self.class_to_int_mapping[i]}')
 
         ax1.legend(prop={'size': 6})
         ax2.legend(prop={'size': 6})
@@ -2344,6 +2330,25 @@ class Trainer:
         self.post = CorrectAndSmooth(num_correction_layers=2, correction_alpha=0.9,
                         num_smoothing_layers=1, smoothing_alpha=0.0001,
                         autoscale=True) if self.correct_and_smooth else None
+        
+    def load_model_and_get_predictions(self, path):
+        self.model = self.model_cls(self.data.array_of_graphs_for_testing[0].to(self.device)).to(self.device)
+        self.model.load_state_dict(torch.load(path))
+        self.model.eval()
+
+        answers = dict()
+
+        for i, test_graph in enumerate(self.data.array_of_graphs_for_testing):
+            logits = self.model(test_graph.to(self.device)).cpu().detach()
+            probs = F.softmax(logits[-1], dim=-1).numpy()
+            preds = np.argmax(logits[-1].numpy())
+
+            answers[f'test_graph_{i}'] = {'answer_class': self.data.classes[preds],
+                                          'answer_id': preds,
+                                          'probabilities': probs}
+            
+        return answers
+
 
     def compute_metrics_cross_entropy(self, graphs, mask=False, phase=None):
         y_true = []
