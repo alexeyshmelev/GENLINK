@@ -1079,13 +1079,14 @@ class DataProcessor:
         features_num_edges = np.zeros((num_nodes, num_classes))
         
         # Accumulators for sum of IBD, sum of squares, and count (float by default).
+        num_seg_ibd = np.zeros((num_nodes, num_classes))
         max_ibd   = np.zeros((num_nodes, num_classes))
         sum_ibd   = np.zeros((num_nodes, num_classes))
         sumsq_ibd = np.zeros((num_nodes, num_classes))
         count_ibd = np.zeros((num_nodes, num_classes))
         
         # This matrix will hold the mean, max and std per node/class.
-        features_ibd = np.zeros((num_nodes, num_classes * 3))
+        features_ibd = np.zeros((num_nodes, num_classes * 4))
         
         for i in range(df.shape[0]):
             row = df[i]
@@ -1097,6 +1098,7 @@ class DataProcessor:
               
                 idx = hashmap[int(row[0])]
                 cl = int(row[3])
+                num_seg_ibd[idx, cl] += row[5]
                 max_ibd[idx, cl] = max(max_ibd[idx, cl], value)
                 sum_ibd[idx, cl]   += value
                 sumsq_ibd[idx, cl] += value * value
@@ -1108,6 +1110,7 @@ class DataProcessor:
                
                 idx = hashmap[int(row[1])]
                 cl = int(row[2])
+                num_seg_ibd[idx, cl] += row[5]
                 max_ibd[idx, cl] = max(max_ibd[idx, cl], value)
                 sum_ibd[idx, cl]   += value
                 sumsq_ibd[idx, cl] += value * value
@@ -1126,6 +1129,7 @@ class DataProcessor:
 
                 idx0 = hashmap[int(row[0])]
                 cl0  = int(row[3])
+                num_seg_ibd[idx0, cl0] += row[5]
                 max_ibd[idx0, cl0] = max(max_ibd[idx0, cl0], value)
                 sum_ibd[idx0, cl0]   += value
                 sumsq_ibd[idx0, cl0] += value * value
@@ -1133,6 +1137,7 @@ class DataProcessor:
 
                 idx1 = hashmap[int(row[1])]
                 cl1  = int(row[2])
+                num_seg_ibd[idx1, cl1] += row[5]
                 max_ibd[idx1, cl1] = max(max_ibd[idx1, cl1], value)
                 sum_ibd[idx1, cl1]   += value
                 sumsq_ibd[idx1, cl1] += value * value
@@ -1148,10 +1153,12 @@ class DataProcessor:
                     var_val = (sumsq_ibd[i, j] / cnt) - (mean_val * mean_val)
                     features_ibd[i, num_classes + j] = var_val ** 0.5 if var_val > 0 else 0.0
                     features_ibd[i, num_classes * 2 + j] = max_ibd[i, j]
+                    features_ibd[i, num_classes * 3 + j] = num_seg_ibd[i, j]
                 else:
                     features_ibd[i, j] = 0.0
                     features_ibd[i, num_classes + j] = 0.0
                     features_ibd[i, num_classes * 2 + j] = 0.0
+                    features_ibd[i, num_classes * 3 + j] = 0.0
                     
         # Concatenate the edge counts with the aggregated features.
         return np.concatenate((features_num_edges, features_ibd), axis=1)
@@ -1389,7 +1396,7 @@ class DataProcessor:
             self.array_of_graphs_for_testing = []
             self.array_of_graphs_for_validation = []
         
-        assert list(self.df.columns)[:5] == ['node_id1', 'node_id2', 'label_id1', 'label_id2', 'ibd_sum']
+        assert list(self.df.columns)[:] == ['node_id1', 'node_id2', 'label_id1', 'label_id2', 'ibd_sum', 'ibd_n']
 
         if feature_type == 'one_hot' and model_type == 'homogeneous':
             if train_dataset_type == 'multiple' and test_dataset_type == 'multiple':
@@ -1598,8 +1605,9 @@ class DataProcessor:
                         graph = self.generate_graph(current_test_nodes, specific_node, self.dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
                         
                         assert graph.x.shape[0] == len(current_test_nodes)
-                        assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
-                        assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+                        if not skip_train_val:
+                            assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
+                            assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
 
                         self.array_of_graphs_for_testing.append(graph)
 
@@ -1909,8 +1917,25 @@ class DataProcessor:
 
 
 class Heuristics:
-    def __init__(self, data: DataProcessor):
+    def __init__(self, data: DataProcessor, return_predictions_instead_of_metrics=False):
         self.data = data
+        self.return_predictions_instead_of_metrics = return_predictions_instead_of_metrics
+
+    def collect_predictions(self, y_pred, isolated_test_nodes):
+        answers = dict()
+
+        assert len(self.data.test_nodes) == len(isolated_test_nodes)
+
+        for i, test_node in enumerate(self.data.test_nodes):
+            
+            if isolated_test_nodes[i] == 0:
+                preds = y_pred.pop(0)
+
+                answers[f'test_node_{test_node}'] = {'answer_class': self.data.classes[preds],
+                                            'answer_id': preds,
+                                            'real_node_name': self.data.int_to_node_names_mapping[test_node]}
+            
+        return answers
 
     def compute_metrics(self, y_true, y_pred):
 
@@ -1932,9 +1957,12 @@ class Heuristics:
 
     def max_number_of_edges_per_class(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
+        isolated_test_nodes = []
         for test_node in self.data.test_nodes:
-            edges_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                edges_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                edges_per_class = {i:0 for i in range(len(self.data.classes))}
             # ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
             G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
@@ -1946,23 +1974,35 @@ class Heuristics:
 
                 y_preds.append(max(edges_per_class, key=edges_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
 
 
     def max_number_of_edges_per_class_per_population(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
-        all_node_classes = nx.get_node_attributes(self.data.nx_graph, "class")
-        class_balance = {i:0 for i in range(len(self.data.classes))}
+        isolated_test_nodes = []
+        all_node_classes = nx.get_node_attributes(nx.subgraph(self.data.nx_graph, self.data.train_nodes), "class")
+        if 'masked' in self.data.classes:
+            class_balance = {i:0 for i in range(len(self.data.classes) - 1)}
+        else:
+            class_balance = {i:0 for i in range(len(self.data.classes))}
         for node, cls in all_node_classes.items():
             class_balance[cls] += 1
         for test_node in self.data.test_nodes:
-            edges_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                edges_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                edges_per_class = {i:0 for i in range(len(self.data.classes))}
             G = nx.subgraph(self.data.nx_graph, self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
@@ -1975,18 +2015,27 @@ class Heuristics:
 
                 y_preds.append(max(edges_per_class, key=edges_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
             
     def max_number_of_segments_per_class(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
+        isolated_test_nodes = []
         for test_node in self.data.test_nodes:
-            segments_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                segments_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                segments_per_class = {i:0 for i in range(len(self.data.classes))}
             # ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
             G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
@@ -2003,19 +2052,28 @@ class Heuristics:
                         raise Exception('No edge in subgraph!')
                 y_preds.append(max(segments_per_class, key=segments_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
 
 
     def longest_ibd(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
+        isolated_test_nodes = []
         for test_node in self.data.test_nodes:
-            ibd_max_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                ibd_max_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                ibd_max_per_class = {i:0 for i in range(len(self.data.classes))}
             G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
@@ -2033,20 +2091,29 @@ class Heuristics:
 
                 y_preds.append(max(ibd_max_per_class, key=ibd_max_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
 
 
     def max_ibd_sum_per_class(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
+        isolated_test_nodes = []
         for test_node in self.data.test_nodes:
             # edges_per_class = {i:0 for i in range(len(self.data.classes))}
-            ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                ibd_sum_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
             G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
@@ -2062,23 +2129,35 @@ class Heuristics:
 
                 y_preds.append(max(ibd_sum_per_class, key=ibd_sum_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
 
 
     def max_ibd_sum_per_class_per_population(self):
         y_true, y_preds = [], []
-        isolated_test_nodes = 0
-        all_node_classes = nx.get_node_attributes(self.data.nx_graph, "class")
-        class_balance = {i:0 for i in range(len(self.data.classes))}
+        isolated_test_nodes = []
+        all_node_classes = nx.get_node_attributes(nx.subgraph(self.data.nx_graph, self.data.train_nodes), "class")
+        if 'masked' in self.data.classes:
+            class_balance = {i:0 for i in range(len(self.data.classes) - 1)}
+        else:
+            class_balance = {i:0 for i in range(len(self.data.classes))}
         for node, cls in all_node_classes.items():
             class_balance[cls] += 1
         for test_node in self.data.test_nodes:
-            ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
+            if 'masked' in self.data.classes:
+                ibd_sum_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
+            else:
+                ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
             G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
@@ -2097,12 +2176,18 @@ class Heuristics:
 
                 y_preds.append(max(ibd_sum_per_class, key=ibd_sum_per_class.get))
                 y_true.append(node_classes[test_node])
+                isolated_test_nodes.append(0)
             else:
-                isolated_test_nodes += 1
+                isolated_test_nodes.append(1)
+        
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_preds, isolated_test_nodes)
+        
+        else:
 
-        f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
+            f1_macro_score, f1_weighted_score, recall_macro_score, recall_weighted_score, precision_macro_score, precision_weighted_score, acc, f1_macro_score_per_class = self.compute_metrics(y_true, y_preds)
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': isolated_test_nodes}
+            return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(isolated_test_nodes)}
 
                 
 
@@ -2702,58 +2787,76 @@ class Trainer:
         
 
 
-def independent_test(model_path, model_cls, df, vertex_id, gpu_id, test_type, mask_nodes=None):
+# def independent_test(model_path, model_cls, df, vertex_id, gpu_id, test_type, mask_nodes=None):
 
-    dp = DataProcessor(df.copy(), is_path_object=True)
-    dp.classes.remove('unknown')
-    unique_nodes = list(pd.concat([df['node_id1'], df['node_id2']], axis=0).unique())
-    if f'node_{vertex_id}' in unique_nodes:
-        unique_nodes.remove(f'node_{vertex_id}')
-    else:
-        raise Exception('Test node not in DataFrame!')
-    train_split = np.array(list(map(lambda x: int(x[5:]), unique_nodes)))
-    valid_split = np.array([vertex_id])
-    test_split = np.array([vertex_id])
-    if mask_nodes is not None:
-        mask_data = np.array(mask_nodes)
-        train_split = np.array(list(filter(lambda node: node not in mask_data, train_split)))
-        valid_split = np.array(list(filter(lambda node: node not in mask_data, valid_split)))
-        test_split = np.array(list(filter(lambda node: node not in mask_data, test_split)))
+#     dp = DataProcessor(df.copy(), is_path_object=True)
+#     dp.classes.remove('unknown')
+#     unique_nodes = list(pd.concat([df['node_id1'], df['node_id2']], axis=0).unique())
+#     if f'node_{vertex_id}' in unique_nodes:
+#         unique_nodes.remove(f'node_{vertex_id}')
+#     else:
+#         raise Exception('Test node not in DataFrame!')
+#     train_split = np.array(list(map(lambda x: int(x[5:]), unique_nodes)))
+#     valid_split = np.array([vertex_id])
+#     test_split = np.array([vertex_id])
+#     if mask_nodes is not None:
+#         mask_data = np.array(mask_nodes)
+#         train_split = np.array(list(filter(lambda node: node not in mask_data, train_split)))
+#         valid_split = np.array(list(filter(lambda node: node not in mask_data, valid_split)))
+#         test_split = np.array(list(filter(lambda node: node not in mask_data, test_split)))
     
-    dp.load_train_valid_test_nodes(train_split, valid_split, test_split, 'numpy', mask_path=mask_nodes)
+#     dp.load_train_valid_test_nodes(train_split, valid_split, test_split, 'numpy', mask_path=mask_nodes)
     
-    # what if some vertex_id node can't be attached to train graph? Add handling of this behavior
+#     # what if some vertex_id node can't be attached to train graph? Add handling of this behavior
     
-    if test_type == 'one_hot':        
-        dp.make_train_valid_test_datasets_with_numba('one_hot', 'homogeneous', 'multiple', 'multiple', 'debug_debug', skip_train_val=True)
-    elif test_type == 'graph_based':
-        dp.make_train_valid_test_datasets_with_numba('graph_based', 'homogeneous', 'one', 'multiple', 'debug_debug', skip_train_val=True)
-    elif test_type == 'graph_based_masked' and mask_nodes is not None:
-        dp.make_train_valid_test_datasets_with_numba('graph_based', 'homogeneous', 'one', 'multiple', 'debug_debug', skip_train_val=True, masking=True)
-    elif test_type == 'one_hot_masked' and mask_nodes is not None:
-        dp.make_train_valid_test_datasets_with_numba('one_hot', 'homogeneous', 'multiple', 'multiple', 'debug_debug', skip_train_val=True, masking=True)  
-    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else 'cpu')
-    model = model_cls(dp.array_of_graphs_for_testing[0]).to(device)
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
+#     if test_type == 'one_hot':        
+#         dp.make_train_valid_test_datasets_with_numba('one_hot', 'homogeneous', 'multiple', 'multiple', 'debug_debug', skip_train_val=True)
+#     elif test_type == 'graph_based':
+#         dp.make_train_valid_test_datasets_with_numba('graph_based', 'homogeneous', 'one', 'multiple', 'debug_debug', skip_train_val=True)
+#     elif test_type == 'graph_based_masked' and mask_nodes is not None:
+#         dp.make_train_valid_test_datasets_with_numba('graph_based', 'homogeneous', 'one', 'multiple', 'debug_debug', skip_train_val=True, masking=True)
+#     elif test_type == 'one_hot_masked' and mask_nodes is not None:
+#         dp.make_train_valid_test_datasets_with_numba('one_hot', 'homogeneous', 'multiple', 'multiple', 'debug_debug', skip_train_val=True, masking=True)  
+#     device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else 'cpu')
+#     model = model_cls(dp.array_of_graphs_for_testing[0]).to(device)
+#     model.load_state_dict(torch.load(model_path))
+#     model.eval()
     
-    p = F.softmax(model(dp.array_of_graphs_for_testing[0].to(device))[-1], dim=0).cpu().detach().numpy()
-    dp.array_of_graphs_for_testing[0].to('cpu')
-    return dp.classes[np.argmax(p)]
+#     p = F.softmax(model(dp.array_of_graphs_for_testing[0].to(device))[-1], dim=0).cpu().detach().numpy()
+#     dp.array_of_graphs_for_testing[0].to('cpu')
+#     return dp.classes[np.argmax(p)]
     
     
    
 
         
 class CommunityDetection:
-    def __init__(self, data: DataProcessor):
+    def __init__(self, data: DataProcessor, return_predictions_instead_of_metrics=False):
         self.data = data
+        self.return_predictions_instead_of_metrics = return_predictions_instead_of_metrics
+
+    def collect_predictions(self, y_pred, isolated_test_nodes):
+        answers = dict()
+
+        assert len(self.data.test_nodes) == len(isolated_test_nodes)
+
+        for i, test_node in enumerate(self.data.test_nodes):
+            
+            if isolated_test_nodes[i] == 0:
+                preds = y_pred.pop(0)
+
+                answers[f'test_node_{test_node}'] = {'answer_class': self.data.classes[preds],
+                                            'answer_id': preds,
+                                            'real_node_name': self.data.int_to_node_names_mapping[test_node]}
+            
+        return answers
         
     def torch_geometric_label_propagation(self, num_layers, alpha, use_weight=True, use_masking_from_data=True):
         model = LabelPropagation(num_layers=num_layers, alpha=alpha)
         
         y_pred = []
         y_true = []
+        probabilities = []
         for i in tqdm(range(len(self.data.array_of_graphs_for_testing)), desc='Label propagation'):
             graph = self.data.array_of_graphs_for_testing[i]
             # print(graph.x[-1])
@@ -2765,9 +2868,21 @@ class CommunityDetection:
                 node_mask = node_mask[:-1] + [False]
             else:
                 node_mask = [True] * (len(graph.y)-1) + [False]
+
+            logits = model(y=graph.y, mask = node_mask, edge_index=graph.edge_index, edge_weight=graph.weight if use_weight==True else None)
+            probabilities.append(logits.softmax(dim=-1).detach().cpu().numpy())
                 
-            y_pred.append(model(y=graph.y, mask = node_mask,  edge_index=graph.edge_index, edge_weight=graph.weight if use_weight==True else None).argmax(dim=-1)[-1]) # -1 is always test vertex
+            y_pred.append(logits.argmax(dim=-1)[-1]) # -1 is always test vertex
             
+        if self.return_predictions_instead_of_metrics:
+            answers = dict()
+            for i in range(len(self.data.array_of_graphs_for_testing)):
+                answers[f'test_graph_{i}'] = {'answer_class': self.data.classes[y_pred[i]],
+                                            'answer_id': y_pred[i],
+                                            'probabilities': probabilities[i][-1]}
+                
+            return answers
+        
         f1_macro_score = f1_score(y_true, y_pred, average='macro')
         # print(f"f1 macro score on test dataset: {f1_macro_score}")
         
@@ -2877,6 +2992,9 @@ class CommunityDetection:
         y_pred_classes = y_pred_classes[y_pred_classes != -1]
         y_pred_cluster = y_pred_cluster[y_pred_cluster != -1]
         y_true = y_true[y_true != -1]
+
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(list(y_pred_classes), skipped_nodes)
                 
         # print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
         
@@ -2932,7 +3050,7 @@ class CommunityDetection:
         y_pred_classes = []
         y_pred_cluster = []
         y_true = []
-        skipped_nodes = 0
+        skipped_nodes = []
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Agglomerative clustering'):
             current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
@@ -2942,11 +3060,11 @@ class CommunityDetection:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
                 # print('Isolated test node found, skipping!')
-                skipped_nodes += 1
+                skipped_nodes.append(1)
                 continue
             elif len(G_test) <= len(self.data.classes):
                 # print('Too few nodes!!! Skipping!!!')
-                skipped_nodes += 1
+                skipped_nodes.append(1)
                 continue
             else:
                 # print(len(G_test))
@@ -2966,8 +3084,12 @@ class CommunityDetection:
 
                 cluster2target_mapping = self.map_cluster_labels_with_target_classes(preds, ground_truth, graph_test_node_list, self.data.test_nodes[i])
                 y_pred_classes.append(cluster2target_mapping[preds[graph_test_node_list.index(self.data.test_nodes[i])]])
+                skipped_nodes.append(0)
                 
         # print(f'Homogenity score: {homogeneity_score(y_true, y_pred_cluster)}')
+
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_pred_classes, skipped_nodes)
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
         # print(f"f1 macro score on test dataset: {f1_macro_score}")
@@ -2990,7 +3112,7 @@ class CommunityDetection:
             # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': skipped_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(skipped_nodes)}
     
     def girvan_newman_thread(self, test_node_idx):
 
@@ -3136,7 +3258,7 @@ class CommunityDetection:
         y_pred_classes = []
         y_pred_cluster = []
         y_true = []
-        skipped_nodes = 0
+        skipped_nodes = []
         
         for i in tqdm(range(len(self.data.test_nodes)), desc='Relational classifier'):
             current_nodes = self.data.train_nodes + [self.data.test_nodes[i]]
@@ -3146,11 +3268,11 @@ class CommunityDetection:
                     G_test = G_test_init.subgraph(c).copy()
             if len(G_test.nodes) == 1:
                 # print('Isolated test node found, skipping!')
-                skipped_nodes += 1
+                skipped_nodes.append(1)
                 continue
             elif len(G_test) <= len(self.data.classes):
                 # print('Too few nodes!!! Skipping!!!')
-                skipped_nodes += 1
+                skipped_nodes.append(1)
                 continue
             else:
                 
@@ -3170,6 +3292,10 @@ class CommunityDetection:
                 y_true.append(ground_truth_all[graph_test_node_list.index(self.data.test_nodes[i])])
 
                 y_pred_classes.append(preds[graph_test_node_list.index(self.data.test_nodes[i])])
+                skipped_nodes.append(0)
+
+        if self.return_predictions_instead_of_metrics:
+            return self.collect_predictions(y_pred_classes, skipped_nodes)
         
         f1_macro_score = f1_score(y_true, y_pred_classes, average='macro')
         # print(f"f1 macro score on test dataset: {f1_macro_score}")
@@ -3192,7 +3318,7 @@ class CommunityDetection:
             # print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
             f1_macro_score_per_class[self.data.classes[i]] = score_per_class
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': skipped_nodes}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': sum(skipped_nodes)}
     
     
     def multi_rank_walk_core(self, G, x_labeled, x_unlabeled, y_labeled, alpha):
