@@ -29,6 +29,7 @@ from scipy.spatial.distance import squareform
 # from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.data import Dataset, DataLoader
 from scipy.cluster.hierarchy import dendrogram, linkage
+from matplotlib.colors import LinearSegmentedColormap
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import reverse_cuthill_mckee
@@ -220,7 +221,7 @@ class DataProcessor:
         self.edge_probs = None
         self.mean_weight = None
         self.offset = 6.0
-        self.df = path if is_path_object else pd.read_csv(path)
+        self.df = path.copy() if is_path_object else pd.read_csv(path)
         self.node_names_to_int_mapping: dict[str, int] = self.get_node_names_to_int_mapping(self.get_unique_nodes(self.df))
         self.int_to_node_names_mapping = {v:k for k, v in self.node_names_to_int_mapping.items()}
         self.classes: list[str] = self.get_classes(self.df)
@@ -245,8 +246,10 @@ class DataProcessor:
         
     def get_class_colors(self):
         colors = ['#00ff72', '#004eff', '#a900ff', '#ff002f', '#ffc800', '#00ffff', '#6f6f6f', '#ff9900']
-        assert len(self.classes) <= len(colors)
-        return {self.classes[i]:colors[i] for i in range(len(self.classes))}
+        cmap = LinearSegmentedColormap.from_list("custom_cmap", colors, N=256)
+        generated_colors = [cmap(i) for i in np.linspace(0, 1, len(self.classes))]
+        # assert len(self.classes) <= len(colors)
+        return {self.classes[i]:generated_colors[i] for i in range(len(self.classes))}
     
     def make_networkx_graph(self):
         G = nx.from_pandas_edgelist(self.df, source='node_id1', target='node_id2', edge_attr=['ibd_sum', 'ibd_n'])
@@ -305,7 +308,7 @@ class DataProcessor:
 
         df_node_classes.columns = ['node', 'class_id']
 
-        return df_node_classes.sort_values(by=['node'])
+        return df_node_classes.sort_values(by=['node']).reset_index(drop=True) # just for good naming of the rows
 
     def node_classes_to_dict(self, return_hashmap=False):
         if return_hashmap:
@@ -443,9 +446,6 @@ class DataProcessor:
 
     def load_partitions(self, train_socket, valid_socket, test_socket, mask_socket=None):
 
-        if self.mask_size is None:
-            assert mask_socket is None
-
         print('Warning: we do not check class balance here! Provided splits will be used as is.')
 
         self.train_nodes = [self.node_names_to_int_mapping[node] for node in train_socket]
@@ -492,9 +492,13 @@ class DataProcessor:
                 counter += 1
         return counter
     
-    def addlabels(self, ax, x, y, t):
+    # def addlabels(self, ax, x, y, t):
+    #     for i in range(len(x)):
+    #         ax.text(i, y[i] + 2 if t == 0 else y[i] + 20, y[i], ha = 'center', fontsize=8)
+
+    def addlabels(self, ax, x, y):
         for i in range(len(x)):
-            ax.text(i, y[i] + 2 if t == 0 else y[i] + 20, y[i], ha = 'center', fontsize=8)
+            ax.text(i, y[i] / 2, y[i], ha='center', va='center', fontsize=12, color='white')
 
     def get_simplified_graph_features(self, fig_path, fig_size, dataset_name=None):
         graph_node_classes = nx.get_node_attributes(self.nx_graph, 'class')
@@ -509,7 +513,8 @@ class DataProcessor:
         ax.bar(range(len(class_counts.keys())), list(class_counts.values()), color='#253957')
         ax.set_xticks(range(len(class_counts.keys())))
         ax.set_xticklabels(class_counts.keys(), rotation = 90, ha='right')
-        self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()), 0)
+        # self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()), 0)
+        self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()))
         ax.set_title(f'Class distribution ({dataset_name})')
         ax.set_xlabel(f'Population groups')
         ax.set_ylabel(f'Amount of nodes')
@@ -532,7 +537,8 @@ class DataProcessor:
         ax.bar(range(len(class_counts.keys())), list(class_counts.values()), color='#253957')
         ax.set_xticks(range(len(class_counts.keys())))
         ax.set_xticklabels(class_counts.keys(), rotation = 90, ha='right')
-        self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()), 0)
+        self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()))
+        # self.addlabels(ax, list(class_counts.keys()), list(class_counts.values()), 0)
         ax.set_title(f'Class distribution ({dataset_name})')
         ax.set_xlabel(f'Population groups')
         ax.set_ylabel(f'Amount of nodes')
@@ -1073,12 +1079,13 @@ class DataProcessor:
         features_num_edges = np.zeros((num_nodes, num_classes))
         
         # Accumulators for sum of IBD, sum of squares, and count (float by default).
+        max_ibd   = np.zeros((num_nodes, num_classes))
         sum_ibd   = np.zeros((num_nodes, num_classes))
         sumsq_ibd = np.zeros((num_nodes, num_classes))
         count_ibd = np.zeros((num_nodes, num_classes))
         
-        # This matrix will hold the mean and std per node/class.
-        features_ibd = np.zeros((num_nodes, num_classes * 2))
+        # This matrix will hold the mean, max and std per node/class.
+        features_ibd = np.zeros((num_nodes, num_classes * 3))
         
         for i in range(df.shape[0]):
             row = df[i]
@@ -1090,6 +1097,7 @@ class DataProcessor:
               
                 idx = hashmap[int(row[0])]
                 cl = int(row[3])
+                max_ibd[idx, cl] = max(max_ibd[idx, cl], value)
                 sum_ibd[idx, cl]   += value
                 sumsq_ibd[idx, cl] += value * value
                 count_ibd[idx, cl] += 1
@@ -1100,6 +1108,7 @@ class DataProcessor:
                
                 idx = hashmap[int(row[1])]
                 cl = int(row[2])
+                max_ibd[idx, cl] = max(max_ibd[idx, cl], value)
                 sum_ibd[idx, cl]   += value
                 sumsq_ibd[idx, cl] += value * value
                 count_ibd[idx, cl] += 1
@@ -1117,12 +1126,14 @@ class DataProcessor:
 
                 idx0 = hashmap[int(row[0])]
                 cl0  = int(row[3])
+                max_ibd[idx0, cl0] = max(max_ibd[idx0, cl0], value)
                 sum_ibd[idx0, cl0]   += value
                 sumsq_ibd[idx0, cl0] += value * value
                 count_ibd[idx0, cl0] += 1
 
                 idx1 = hashmap[int(row[1])]
                 cl1  = int(row[2])
+                max_ibd[idx1, cl1] = max(max_ibd[idx1, cl1], value)
                 sum_ibd[idx1, cl1]   += value
                 sumsq_ibd[idx1, cl1] += value * value
                 count_ibd[idx1, cl1] += 1
@@ -1136,9 +1147,11 @@ class DataProcessor:
                     features_ibd[i, j] = mean_val
                     var_val = (sumsq_ibd[i, j] / cnt) - (mean_val * mean_val)
                     features_ibd[i, num_classes + j] = var_val ** 0.5 if var_val > 0 else 0.0
+                    features_ibd[i, num_classes * 2 + j] = max_ibd[i, j]
                 else:
                     features_ibd[i, j] = 0.0
                     features_ibd[i, num_classes + j] = 0.0
+                    features_ibd[i, num_classes * 2 + j] = 0.0
                     
         # Concatenate the edge counts with the aggregated features.
         return np.concatenate((features_num_edges, features_ibd), axis=1)
@@ -1146,7 +1159,7 @@ class DataProcessor:
     
     @staticmethod
     @njit(cache=True, parallel=True)
-    def make_graph_based_features(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights):
+    def make_graph_based_features(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights): # were not yet updaded for new extended graph based features
         
         features_num_edges = np.zeros((num_nodes, num_classes))
         features_ibd_tmp = np.zeros((num_nodes, num_nodes, num_classes))
@@ -1806,7 +1819,10 @@ class DataProcessor:
         # print(test_graph.y[-1], preds[-1])
         
         graph = to_networkx(test_graph, edge_attrs=['weight'], node_attrs=['y', 'mask'], to_undirected=True)
-        all_current_nodes = self.train_nodes + [test_node]
+        if self.mask_nodes is None:
+            all_current_nodes = self.train_nodes + [test_node]
+        else:
+            all_current_nodes = self.train_nodes + self.mask_nodes + [test_node]
         rg = nx.subgraph(self.nx_graph, all_current_nodes)
         # assert np.all(np.array(list(graph.nodes)) == np.array(list(range(len(graph.nodes)))))
         assert nx.vf2pp_is_isomorphic(graph, rg)
@@ -2447,7 +2463,7 @@ class Trainer:
                     print(f"f1 macro score on valid dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
 
         current_f1_score_macro = f1_score(y_true, y_pred, average='macro')
-        if current_f1_score_macro >= self.max_f1_score_macro:
+        if current_f1_score_macro > self.max_f1_score_macro:
             self.patience_counter = 0
             self.max_f1_score_macro = current_f1_score_macro
             if not self.disable_printing:
@@ -2507,8 +2523,12 @@ class Trainer:
         cm = confusion_matrix(y_true, y_pred, normalize='true')
 
         if self.plot_cm:
-            fig, ax = plt.subplots(figsize=(10, 10))
-            sns.heatmap(cm, xticklabels=self.data.classes, yticklabels=self.data.classes, annot=True, fmt='.2f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+            fig, ax = plt.subplots(figsize=(7, 7))
+            if 'masked' in self.data.classes:
+                real_classes = self.data.classes[:-1]
+            else:
+                real_classes = self.data.classes
+            sns.heatmap(cm, xticklabels=real_classes, yticklabels=real_classes, annot=True, fmt='.2f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
             ax.set_title(f'Confusion matrix for {self.data.dataset_name}', loc='center')
             for i, tick_label in enumerate(ax.axes.get_yticklabels()):
                 # tick_label.set_color("#008668")
