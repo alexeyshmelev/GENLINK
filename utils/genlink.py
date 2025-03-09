@@ -71,6 +71,13 @@ class NpEncoder(json.JSONEncoder):
 
 
 class FunctionList(list):
+    def __iter__(self):
+        # This is called when you do: `for data in array_data:`
+        # We iterate over the original list, but process each item.
+        for item in super().__iter__():
+            func, *args = item
+            yield func(*args)
+
     def __getitem__(self, index):
         # Handle slices if needed
         if isinstance(index, slice):
@@ -1396,7 +1403,7 @@ class DataProcessor:
             self.array_of_graphs_for_testing = []
             self.array_of_graphs_for_validation = []
         
-        assert list(self.df.columns)[:] == ['node_id1', 'node_id2', 'label_id1', 'label_id2', 'ibd_sum', 'ibd_n']
+        assert list(self.df.columns)[:6] == ['node_id1', 'node_id2', 'label_id1', 'label_id2', 'ibd_sum', 'ibd_n']
 
         if feature_type == 'one_hot' and model_type == 'homogeneous':
             if train_dataset_type == 'multiple' and test_dataset_type == 'multiple':
