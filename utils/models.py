@@ -40,7 +40,7 @@ class GL_MLP_3l_128h(torch.nn.Module):
     def __init__(self, data):
         super().__init__()
         # self.norm = BatchNorm1d(3 * int(data.num_classes))
-        self.fc1 = Linear(3 * int(data.num_classes), 128)
+        self.fc1 = Linear(data.num_features, 128)
         self.fc2 = Linear(128, 128)
         self.fc3 = Linear(128, int(data.num_classes))
 
@@ -58,7 +58,7 @@ class GL_MLP_3l_512h(torch.nn.Module):
     def __init__(self, data):
         super().__init__()
         # self.norm = BatchNorm1d(3 * int(data.num_classes))
-        self.fc1 = Linear(3 * int(data.num_classes), 512)
+        self.fc1 = Linear(data.num_features, 512)
         self.fc2 = Linear(512, 512)
         self.fc3 = Linear(512, int(data.num_classes))
 
@@ -77,7 +77,7 @@ class GL_MLP_9l_128h(torch.nn.Module):
         super().__init__()
         # print('NUM CLASSES', data.num_classes)
         # self.norm = BatchNorm1d(3 * int(data.num_classes))
-        self.fc1 = Linear(3 * int(data.num_classes), 128)
+        self.fc1 = Linear(data.num_features, 128)
         self.fc2 = Linear(128, 128)
         self.fc3 = Linear(128, 128)
         self.fc4 = Linear(128, 128)
@@ -113,7 +113,7 @@ class GL_MLP_9l_512h(torch.nn.Module):
     def __init__(self, data):
         super().__init__()
         # self.norm = BatchNorm1d(3 * int(data.num_classes))
-        self.fc1 = Linear(3 * int(data.num_classes), 512)
+        self.fc1 = Linear(data.num_features, 512)
         self.fc2 = Linear(512, 512)
         self.fc3 = Linear(512, 512)
         self.fc4 = Linear(512, 512)
