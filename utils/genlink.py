@@ -1707,7 +1707,7 @@ class DataProcessor:
                 num_nodes = len(
                     pd.concat([real_connections_df['node_id1'], real_connections_df['node_id2']], axis=0).unique())
 
-                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean()# - self.offset
+                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean() - self.offset
                 if np.isnan(self.mean_weight[i, j]):
                     self.mean_weight[i, j] = np.nan #-self.offset #################### can be improved
 
