@@ -1,0 +1,5 @@
+{
+    "gnn":{"GL_TAGConv_3l_512h_w_k3_gnorm":["one_hot"]},
+    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "community_detection":[]
+}

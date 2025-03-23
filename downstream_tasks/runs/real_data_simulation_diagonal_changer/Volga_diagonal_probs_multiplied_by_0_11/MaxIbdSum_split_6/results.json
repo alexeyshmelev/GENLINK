@@ -1,0 +1,1 @@
+{"f1_macro": 0.0182370820668693, "f1_weighted": 0.0521379156022153, "precision_macro": 0.03125, "precision_weighted": 0.08934049079754601, "recall_macro": 0.012875536480686695, "recall_weighted": 0.03680981595092025, "accuracy": 0.03680981595092025, "class_scores": {"P0": 0.0, "P1": 0.0729483282674772, "P2": 0.0, "P3": 0.0}, "skipped_nodes": 0, "model_name": "MaxIbdSum"}

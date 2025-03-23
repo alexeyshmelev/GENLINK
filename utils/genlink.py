@@ -9,6 +9,7 @@ import itertools
 import numpy as np
 import pandas as pd
 import torch.nn.functional
+from datetime import datetime
 from tqdm import tqdm
 import seaborn as sns
 import networkx as nx
@@ -245,10 +246,10 @@ class DataProcessor:
         self.array_of_graphs_for_testing = []
         self.dict_node_classes = None
         self.df_for_training = None
-        self.df_for_validation = None
-        self.df_for_training = None
         self.disable_printing = disable_printing
         self.no_mask_class_in_df = no_mask_class_in_df
+        self.cached_training_graph_based_features = None
+        self.cached_training_edges = None
         # self.rng = np.random.default_rng(42)
         
     def get_class_colors(self):
@@ -1042,11 +1043,18 @@ class DataProcessor:
             return np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
         else:
             hashmap = np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
-            all_nodes = self.node_classes_sorted['node'].to_numpy()
+            # all_nodes = self.node_classes_sorted['node'].to_numpy()
             for node in self.mask_nodes:
                 hashmap[node] = True
         
         return hashmap
+    
+    def make_keep_for_train_hashmap(self, nodes):
+        hashmap = np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
+        for node in nodes:
+            hashmap[node] = True
+        return hashmap
+
 
     @staticmethod
     @njit(cache=True)
@@ -1081,7 +1089,7 @@ class DataProcessor:
 
     @staticmethod
     @njit(cache=True) # parallel=True work bad with DataLoader
-    def make_graph_based_features_ram_efficient(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights):
+    def make_graph_based_features_ram_efficient(df, hashmap, specific_masked_node_hashmap, num_classes, num_nodes, log_edge_weights, cached_training_graph_based_features, num_train_nodes, df_iteration_start_for_val_and_test_nodes):
         # Matrix counting the number of edges per node and class (float by default).
         features_num_edges = np.zeros((num_nodes, num_classes))
         
@@ -1095,9 +1103,15 @@ class DataProcessor:
         # This matrix will hold the mean, max and std per node/class.
         features_ibd = np.zeros((num_nodes, num_classes * 4))
         
-        for i in range(df.shape[0]):
+        for i in range(0 if (cached_training_graph_based_features is None) else df_iteration_start_for_val_and_test_nodes, df.shape[0]):
+            # if i == 0:
+            #     print('OK1')
             row = df[i]
-            # row structure: [node0, node1, class_for_node1, class_for_node0, weight]
+            # row structure: [node0, node1, class_for_node1, class_for_node0, weight ...]
+
+            if (cached_training_graph_based_features is not None) and hashmap[int(row[0])] != num_train_nodes and hashmap[int(row[1])] != num_train_nodes:
+                # print('OK2')
+                continue
             
             if specific_masked_node_hashmap[int(row[0])] and not specific_masked_node_hashmap[int(row[1])]:
                 features_num_edges[hashmap[int(row[0])], int(row[3])] += 1
@@ -1152,6 +1166,9 @@ class DataProcessor:
         
         # Compute mean and std for each node and class.
         for i in range(num_nodes): # prange work bad with DataLoader
+            if (cached_training_graph_based_features is not None) and i != num_train_nodes:
+                # print('OK3')
+                continue
             for j in range(num_classes):
                 cnt = int(count_ibd[i, j])
                 if cnt != 0:
@@ -1166,6 +1183,13 @@ class DataProcessor:
                     features_ibd[i, num_classes + j] = 0.0
                     features_ibd[i, num_classes * 2 + j] = 0.0
                     features_ibd[i, num_classes * 3 + j] = 0.0
+
+        if (cached_training_graph_based_features is not None):
+            # print('OK4')
+            final_features = np.zeros((num_nodes, num_classes * 5))
+            # print(cached_training_graph_based_features.shape, final_features.shape)
+            final_features[:num_train_nodes, :] = cached_training_graph_based_features
+            return final_features
                     
         # Concatenate the edge counts with the aggregated features.
         return np.concatenate((features_num_edges, features_ibd), axis=1)
@@ -1225,11 +1249,11 @@ class DataProcessor:
 
     @staticmethod
     @njit(cache=True)
-    def drop_rows_for_training_dataset(df, keep_nodes):
+    def drop_rows_for_training_dataset(df, keep_nodes_hashmap):
         drop_rows = []
-        for i in range(df.shape[0]):  # speed it up in future
+        for i in range(df.shape[0]):
             row = df[i, :]
-            if int(row[0]) in keep_nodes and int(row[1]) in keep_nodes:
+            if keep_nodes_hashmap[int(row[0])] and keep_nodes_hashmap[int(row[1])]:
                 continue
             else:
                 drop_rows.append(i)
@@ -1238,20 +1262,30 @@ class DataProcessor:
 
     @staticmethod
     @njit(cache=True)
-    def construct_edges(df, hashmap):
+    def construct_edges(df, hashmap, cached_training_edges, df_iteration_start_for_val_and_test_nodes):
 
         weighted_edges = []
+        # print('C1', df_iteration_start_for_val_and_test_nodes, df.shape[0])
 
-        for i in range(df.shape[0]):
+        for i in range(0 if (cached_training_edges is None) else df_iteration_start_for_val_and_test_nodes, df.shape[0]):
+            # print(df.shape, i)
             row = df[i]
             weighted_edges.append([hashmap[int(row[0])], hashmap[int(row[1])], row[4]])
             weighted_edges.append([hashmap[int(row[1])], hashmap[int(row[0])], row[4]])
+
+        # print('LEN', len(weighted_edges))
+
+        if cached_training_edges is not None:
+            if len(weighted_edges) > 0:
+                return np.concatenate((cached_training_edges, np.array(weighted_edges)), axis=0)
+            else:
+                return cached_training_edges
 
         return np.array(weighted_edges)
 
     @staticmethod
     @njit(cache=True)
-    def find_connections_to_nodes(df, train_nodes, non_train_nodes):
+    def find_connections_to_nodes(df, train_nodes_hashmap, non_train_nodes):
 
         rows_for_adding_per_node = []
 
@@ -1259,7 +1293,7 @@ class DataProcessor:
             tmp = []
             for j in range(df.shape[0]):
                 row = df[j]
-                if int(row[0]) == non_train_nodes[i] and int(row[1]) in train_nodes or int(row[1]) == non_train_nodes[i] and int(row[0]) in train_nodes:
+                if int(row[0]) == non_train_nodes[i] and train_nodes_hashmap[int(row[1])] or int(row[1]) == non_train_nodes[i] and train_nodes_hashmap[int(row[0])]:
                     tmp.append(j)
 
             rows_for_adding_per_node.append(tmp)
@@ -1291,7 +1325,7 @@ class DataProcessor:
         return self.dict_node_classes
 
     def generate_graph(self, curr_nodes_data, specific_node, dict_node_classes_data, df_data, log_edge_weights, feature_type, masking, no_mask_class_in_df):
-
+        # print('B1', datetime.now().strftime("%H:%M:%S"))
 
         if isinstance(df_data, pd.DataFrame):
             df = df_data.copy()
@@ -1333,35 +1367,49 @@ class DataProcessor:
 
         # numba.np.ufunc.parallel._is_initialized = False
         hashmap = self.make_hashmap(curr_nodes)
+        # print('B2', datetime.now().strftime("%H:%M:%S"))
         if feature_type == 'one_hot':
             if masking:
                 features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
-                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap, mask_nodes=numba.typed.List(self.mask_nodes), no_mask_class_in_df=no_mask_class_in_df)
+                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap, mask_nodes=(numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None, no_mask_class_in_df=no_mask_class_in_df)
             else:
                 features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
                                                               dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap)
             assert np.sum(np.array(features).sum(axis=1) == 0) == 0
         elif feature_type == 'graph_based':
+            # print('B3', datetime.now().strftime("%H:%M:%S"))
             specific_masked_node_hashmap = masked_node_hashmap.copy()
             if specific_node != -1:
                 specific_masked_node_hashmap[specific_node] = True
             if masking:
-                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights, self.cached_training_graph_based_features, len(self.train_nodes + self.mask_nodes), self.df_for_training.shape[0])
+                if self.cached_training_graph_based_features is None:
+                    self.cached_training_graph_based_features = features[:len(self.train_nodes + self.mask_nodes), :]
                 # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
                 # node_mask = self.get_mask(curr_nodes, self.mask_nodes)
             else:
                 # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
-                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights, self.cached_training_graph_based_features, len(self.train_nodes), self.df_for_training.shape[0])
+                if self.cached_training_graph_based_features is None:
+                    self.cached_training_graph_based_features = features[:len(self.train_nodes), :]
         else:
             raise Exception('Such feature type is not known!')
         
-        targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None)
-        weighted_edges = self.construct_edges(df.to_numpy(), hashmap)
+        # print('B4', datetime.now().strftime("%H:%M:%S"))
+        targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None)
+        # print('B4-A', datetime.now().strftime("%H:%M:%S"))
+        weighted_edges = self.construct_edges(df.to_numpy(), hashmap, self.cached_training_edges, self.df_for_training.shape[0])
+        if self.cached_training_edges is None and feature_type == 'graph_based':
+            self.cached_training_edges = weighted_edges[:self.df_for_training.shape[0]*2, :]
+
+        assert df.shape[0] * 2 == weighted_edges.shape[0]
 
         # sort edges
-        node_mask = self.get_mask(numba.typed.List(curr_nodes), numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None, masked_node_hashmap)
-        sort_idx = np.lexsort((weighted_edges[:, 1], weighted_edges[:, 0]))
-        weighted_edges = weighted_edges[sort_idx]
+        # print('B5', datetime.now().strftime("%H:%M:%S"))
+        node_mask = self.get_mask(numba.typed.List(curr_nodes), (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None, masked_node_hashmap)
+        # print('B5-A', datetime.now().strftime("%H:%M:%S"))
+        # sort_idx = np.lexsort((weighted_edges[:, 1], weighted_edges[:, 0]))
+        # weighted_edges = weighted_edges[sort_idx]
 
         # checking
         if feature_type == 'one_hot':
@@ -1378,17 +1426,19 @@ class DataProcessor:
                     raise Exception('Uniform distributions encountered not for masked nodes!')
                 assert np.all(features[-1] == (1 / (len(self.classes) - 1)))
             
+        # print('B6', datetime.now().strftime("%H:%M:%S"))
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
              'weight': -torch.log2(torch.tensor(weighted_edges[:, 2]) / 6600) if log_edge_weights else torch.tensor(weighted_edges[:, 2]), # try 1) log(IBD/8 * e) 2) 1 / T
              'edge_index': torch.tensor(weighted_edges[:, :2].T, dtype=torch.long),
-             'mask': torch.tensor(node_mask)})
+             'mask': torch.tensor(node_mask)}).sort() # added sorting
 
         if not masking and feature_type == 'one_hot':
             # mask for correcting GNN predictions with label propagation
             correct_and_smooth_mask = torch.tensor([True] * (len(targets)-1) + [False]).bool()
             graph.correct_and_smooth_mask = correct_and_smooth_mask
         graph.num_classes = len(self.classes) - 1 if (masking and not no_mask_class_in_df) else len(self.classes)
+        # print('B7', datetime.now().strftime("%H:%M:%S"))
 
         return graph
 
@@ -1410,9 +1460,11 @@ class DataProcessor:
                 self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
                 self.df_for_training = self.df.copy()
                 if masking:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), keep_for_train_hashmap)
                 else:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), keep_for_train_hashmap)
                 self.df_for_training = self.df_for_training.drop(drop_rows)
 
                 # make training samples
@@ -1438,12 +1490,14 @@ class DataProcessor:
                 # make validation samples
                 if not skip_train_val:
                     if masking:
+                        keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
                         rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                       np.array(self.train_nodes + self.mask_nodes),
+                                                                                       keep_for_train_hashmap,
                                                                                        np.array(self.valid_nodes))
                     else:
+                        keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
                         rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                       np.array(self.train_nodes),
+                                                                                       keep_for_train_hashmap,
                                                                                        np.array(self.valid_nodes))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
                         rows_for_adding = rows_for_adding_per_node[k]
@@ -1474,12 +1528,14 @@ class DataProcessor:
 
                 # make testing samples
                 if masking:
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
                     rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                               np.array(self.train_nodes + self.mask_nodes),
+                                                                               keep_for_train_hashmap,
                                                                                np.array(self.test_nodes))
                 else:
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
                     rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                   np.array(self.train_nodes),
+                                                                                   keep_for_train_hashmap,
                                                                                    np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
                     rows_for_adding = rows_for_adding_per_node[k]
@@ -1510,13 +1566,19 @@ class DataProcessor:
 
         elif feature_type == 'graph_based' and model_type == 'homogeneous':
             if train_dataset_type == 'one' and test_dataset_type == 'multiple':
+                # print('A4', datetime.now().strftime("%H:%M:%S"))
                 self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
+                # print('A5', datetime.now().strftime("%H:%M:%S"))
                 self.df_for_training = self.df.copy()
                 if masking:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), keep_for_train_hashmap)
                 else:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), keep_for_train_hashmap)
+                # print('A6', datetime.now().strftime("%H:%M:%S"))
                 self.df_for_training = self.df_for_training.drop(drop_rows)
+                # print('A7', datetime.now().strftime("%H:%M:%S"))
 
                 # make training samples
                 if not skip_train_val:
@@ -1542,14 +1604,18 @@ class DataProcessor:
                 # make validation samples
                 if not skip_train_val:
                     # print('VALID NODES', sum(self.valid_nodes), len(self.valid_nodes))
+                    # print('A8', datetime.now().strftime("%H:%M:%S"))
                     if masking:
+                        keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
                         rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                           np.array(self.train_nodes + self.mask_nodes),
+                                                                                           keep_for_train_hashmap,
                                                                                            np.array(self.valid_nodes))
                     else:
+                        keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
                         rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                           np.array(self.train_nodes),
+                                                                                           keep_for_train_hashmap,
                                                                                            np.array(self.valid_nodes))
+                    # print('A9', datetime.now().strftime("%H:%M:%S"))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
                         rows_for_adding = rows_for_adding_per_node[k]
                         df_for_validation = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
@@ -1570,23 +1636,28 @@ class DataProcessor:
                             self.array_of_graphs_for_validation.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
 
                         else:
-
+                            
+                            # print('A10', datetime.now().strftime("%H:%M:%S"))
                             graph = self.generate_graph(current_valid_nodes, specific_node, self.dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
                             
+                            # print('A11', datetime.now().strftime("%H:%M:%S"))
                             assert graph.x.shape[0] == len(current_valid_nodes)
                             assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
                             assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+                            # print('A12', datetime.now().strftime("%H:%M:%S"))
 
                             self.array_of_graphs_for_validation.append(graph)
 
                 # make testing samples
                 if masking:
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes + self.mask_nodes)
                     rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                       np.array(self.train_nodes + self.mask_nodes),
+                                                                                       keep_for_train_hashmap,
                                                                                        np.array(self.test_nodes))
                 else:
+                    keep_for_train_hashmap = self.make_keep_for_train_hashmap(self.train_nodes)
                     rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
-                                                                                       np.array(self.train_nodes),
+                                                                                       keep_for_train_hashmap,
                                                                                        np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
                     rows_for_adding = rows_for_adding_per_node[k]
