@@ -17,6 +17,7 @@ import torch.nn as nn
 import matplotlib as mpl
 from sklearn import metrics
 from multiprocessing import Pool
+from ipywidgets import interact, FloatSlider
 from collections import OrderedDict, Counter
 from torch_geometric.utils import to_networkx
 import matplotlib.colors as colors
@@ -1741,6 +1742,43 @@ class DataProcessor:
         if save_path is not None:
             plt.savefig(save_path, bbox_inches="tight")
         plt.show()
+
+
+    def plot_simulated_probs_interactive(self, dataset_name=None):
+
+
+        def plot_heatmap(multiplier=1.0):
+            plt.figure(figsize=(6, 6))
+
+            matrix = self.edge_probs.copy()
+            new_edge_prob_diag = matrix.diagonal() * multiplier
+            np.fill_diagonal(matrix, new_edge_prob_diag)
+
+            # Create the heatmap
+            ax = sns.heatmap(
+                matrix, 
+                xticklabels=self.classes, 
+                yticklabels=self.classes, 
+                annot=True, 
+                fmt='.4f',
+                cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True)
+            )
+            ax.set_title(f'Edge probabilities ({dataset_name})', loc='center')
+            ax.set_xticklabels(ax.get_xticklabels(), fontsize=10)
+            ax.set_yticklabels(ax.get_yticklabels(), fontsize=10)
+
+            plt.show()
+        
+        interact(
+            plot_heatmap, 
+            multiplier=FloatSlider(
+                min=0.0,   # minimum value
+                max=1.0,  # maximum value
+                step=0.01,  # slider step size
+                value=1.0, # default value
+                continuous_update=True
+            )
+        )
 
 
     def plot_simulated_weights(self, save_path=None, dataset_name=None):
