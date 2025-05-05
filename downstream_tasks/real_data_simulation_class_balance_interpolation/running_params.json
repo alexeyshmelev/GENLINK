@@ -15,7 +15,7 @@
     "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/genlink_simulated_real_data_class_balance_interpolation",
     "patience":[10],
     "num_epochs":[10],
-    "train_iterations_per_sample":[100],
+    "train_iterations_per_sample":[1000],
     "evaluation_steps":[10],
     "loss_weights":[null],
     "masking":null,
@@ -28,5 +28,5 @@
     "save_dataset_stats":true,
     "no_mask_class_in_df":true,
     "make_ram_efficient_dataset":true,
-    "num_workers": 2
+    "num_workers": 8
 }

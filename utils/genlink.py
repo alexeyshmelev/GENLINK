@@ -335,7 +335,7 @@ class DataProcessor:
 
             if mask_size is not None and sub_train_size is not None:
                 assert mask_size <= 1.
-                assert sub_train_size < 1.
+                assert sub_train_size <= 1.
             elif mask_size is None and sub_train_size is None:
                 pass
             else:
@@ -375,7 +375,8 @@ class DataProcessor:
                 else:
                     self.test_nodes.append(node_classes_random.iloc[i, 0])
 
-            if mask_size is not None:
+            if mask_size is not None and len(train_nodes_for_mask_selection) > 0:
+                assert sub_train_size < 1.
                 node_classes_sorted_masks = self.node_classes_sorted.iloc[train_nodes_for_mask_selection, :].reset_index(drop=True)
                 node_classes_masks_random = node_classes_sorted_masks.sample(frac=1, random_state=random_state) # check that multible random state behevior
             
@@ -437,7 +438,9 @@ class DataProcessor:
 
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes))}) of all nodes in dataset were labeled (these are nodes without real masks), there were ({len(self.mask_nodes)}) masked nodes')
 
-
+        # print(hash(tuple(self.train_nodes))) # -5406475887983463698
+        # assert hash(tuple(self.train_nodes)) in [-5406475887983463698, -7655646181760694371, -8319941732382453427]
+        # assert False
 
         if save_dir is not None:
             with open(save_dir + '/train.pickle', 'wb') as handle:
@@ -1336,7 +1339,7 @@ class DataProcessor:
         if feature_type == 'one_hot':
             if masking:
                 features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
-                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap, mask_nodes=numba.typed.List(self.mask_nodes), no_mask_class_in_df=no_mask_class_in_df)
+                                                              dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap, mask_nodes=(numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None, no_mask_class_in_df=no_mask_class_in_df)
             else:
                 features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
                                                               dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap)
@@ -1355,11 +1358,11 @@ class DataProcessor:
         else:
             raise Exception('Such feature type is not known!')
         
-        targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None)
+        targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None)
         weighted_edges = self.construct_edges(df.to_numpy(), hashmap)
 
         # sort edges
-        node_mask = self.get_mask(numba.typed.List(curr_nodes), numba.typed.List(self.mask_nodes) if self.mask_nodes is not None else None, masked_node_hashmap)
+        node_mask = self.get_mask(numba.typed.List(curr_nodes), (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None, masked_node_hashmap)
         sort_idx = np.lexsort((weighted_edges[:, 1], weighted_edges[:, 0]))
         weighted_edges = weighted_edges[sort_idx]
 
@@ -1636,7 +1639,7 @@ class DataProcessor:
                 num_nodes = len(
                     pd.concat([real_connections_df['node_id1'], real_connections_df['node_id2']], axis=0).unique())
 
-                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean()# - self.offset
+                self.mean_weight[i, j] = real_connections_df['ibd_sum'].to_numpy().mean() - self.offset
                 if np.isnan(self.mean_weight[i, j]):
                     self.mean_weight[i, j] = np.nan #-self.offset #################### can be improved
 
