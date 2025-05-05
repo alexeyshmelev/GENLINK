@@ -11,11 +11,11 @@
     "lr":[0.0001],
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
-    "batch_size":[10],
+    "batch_size":10,
     "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_mask_100",
     "patience":[10],
     "num_epochs":[10],
-    "train_iterations_per_sample":[100],
+    "train_iterations_per_sample":[1000],
     "evaluation_steps":[10],
     "loss_weights":[null],
     "masking":true,
@@ -25,5 +25,8 @@
     "log_ibd":false,
     "plot_cm":false,
     "use_class_balance_weight":true,
-    "save_dataset_stats":true
+    "save_dataset_stats":true,
+    "no_mask_class_in_df":true,
+    "make_ram_efficient_dataset":false,
+    "num_workers": 8
 }
