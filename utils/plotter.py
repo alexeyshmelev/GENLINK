@@ -10,7 +10,12 @@ import os
 from os import listdir
 from os.path import isdir, join
 
-def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None, highlight_best=False):   
+def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_bars=False, annotate=False, dataset_plot_only=None, class_plot_only=None, highlight_best=False, fig_size=(16, 6),
+                              bar_annotation_size=10,
+                              std_annotation_size=10,
+                              title_size=24,
+                              xlabel_size=18,
+                              ylabel_size=18):   
 
     all_dataset_dirs = [f for f in listdir(data_path) if isdir(join(data_path, f))]
     all_dataset_dirs = (np.array(all_dataset_dirs)[np.array(all_dataset_dirs) != 'dataset_stats']).tolist()
@@ -92,6 +97,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         for name_ft, metrics in results.items():
             name, ft = name_ft
             # print(len(metrics))
+            assert len(metrics) == 10
             classifiers[tuple([name, ft])] = []
             classifiers[tuple([name, ft])].append(np.mean(metrics))
             classifiers[tuple([name, ft])].append(np.std(metrics))
@@ -140,7 +146,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         # print(df)
 
         # Plotting
-        plt.figure(figsize=(16, 6))
+        plt.figure(figsize=fig_size)
         # sns.set(style="whitegrid")
         sns.set_theme()
         
@@ -193,7 +199,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
             #     print(all_pvalues[i])
 
         for i in range(len(bar_plot.containers)):
-            bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=10) # fontsize=6
+            bar_plot.bar_label(bar_plot.containers[i], label_type='center', rotation=90, color='white', fontsize=bar_annotation_size) # fontsize=6
         bar_plot.set_xticklabels(df.Classifier)
         # print(bar_plot.containers[0])
         
@@ -204,7 +210,7 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
 
             # Optionally annotate the bars with the exact mean values
             if annotate:
-                bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=10) # fontsize=6
+                bar_plot.text(i, mean + std + 0.01, f'{std:.2f}', ha='center', va='bottom', fontsize=std_annotation_size) # fontsize=6
 
 
         
@@ -215,11 +221,11 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         #         plt.scatter([],[], c=v, label=k)
 
         if class_plot_only is None:
-            plt.title(f'Model performance for {dataset_dir}')
+            plt.title(f'Model performance for {dataset_dir}', fontsize=title_size)
         else:
-            plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})')
-        plt.xlabel('Model')
-        plt.ylabel('Mean f1-macro score')
+            plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})', fontsize=title_size)
+        plt.xlabel('Model', fontsize=xlabel_size)
+        plt.ylabel('Mean f1-macro score', fontsize=ylabel_size)
         plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=8)  # Rotate x-axis labels for better readability
         ax = plt.gca()
         for i in range(len(ax.get_xticklabels())):
