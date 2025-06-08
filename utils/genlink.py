@@ -534,7 +534,7 @@ class DataProcessor:
 
         
             
-    def get_graph_features(self, fig_path, fig_size, picture_only=False, dataset_name=None):
+    def get_graph_features(self, fig_path, fig_size, simple_run=False, dataset_name=None):
         
         graph_node_classes = nx.get_node_attributes(self.nx_graph, 'class')
         class_counts = dict()
@@ -545,6 +545,7 @@ class DataProcessor:
                 class_counts[self.class_to_int_mapping[v]] += 1
                 
         fig, ax = plt.subplots(figsize=(6, 6))
+        print(class_counts)
         ax.bar(range(len(class_counts.keys())), list(class_counts.values()), color='#253957')
         ax.set_xticks(range(len(class_counts.keys())))
         ax.set_xticklabels(class_counts.keys(), rotation = 90, ha='right')
@@ -557,61 +558,65 @@ class DataProcessor:
         plt.show()
         
         ##########
+
+        if not simple_run:
         
-        def smallest_degree(G):
-            return min(G, key=G.degree)
-        
-        rcm = list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=None))
-        
-        B = nx.adjacency_matrix(self.nx_graph, nodelist=rcm)
-        img, ax = plt.subplots(1, 1, figsize=(20, 20))
-        pic = sns.heatmap(B.todense(), cbar=False, square=True, linewidths=0, annot=False, cmap=mcm.gray, ax=ax)
-        
-        node_classes = nx.get_node_attributes(self.nx_graph, "class")
-        
-        ax.set_xticks(range(len(rcm)))
-        ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for xtick, color in zip(ax.get_xticklabels(), colors):
-            xtick.set_color(color)
+            def smallest_degree(G):
+                return min(G, key=G.degree)
             
-        ax.set_yticks(range(len(rcm)))
-        ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for ytick, color in zip(ax.get_yticklabels(), colors):
-            ytick.set_color(color)
+            rcm = list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=None))
             
-        # pic.set(xticklabels=[], yticklabels=[])
-        # ax.tick_params(left=False, bottom=False)
-        ax.set_title(f'Cuthill-McKee adjacency matrix ({dataset_name})')
-        plt.savefig(f'{fig_path}adjacency_matrix.png', bbox_inches='tight', dpi=400) # pdf is too heavy
-        plt.show()
+            B = nx.adjacency_matrix(self.nx_graph, nodelist=rcm)
+            img, ax = plt.subplots(1, 1, figsize=(20, 20))
+            pic = sns.heatmap(B.todense(), cbar=False, square=True, linewidths=0, annot=False, cmap=mcm.gray, ax=ax)
+            
+            node_classes = nx.get_node_attributes(self.nx_graph, "class")
+            
+            ax.set_xticks(range(len(rcm)))
+            ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for xtick, color in zip(ax.get_xticklabels(), colors):
+                xtick.set_color(color)
+                
+            ax.set_yticks(range(len(rcm)))
+            ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for ytick, color in zip(ax.get_yticklabels(), colors):
+                ytick.set_color(color)
+                
+            # pic.set(xticklabels=[], yticklabels=[])
+            # ax.tick_params(left=False, bottom=False)
+            ax.set_title(f'Cuthill-McKee adjacency matrix ({dataset_name})')
+            plt.savefig(f'{fig_path}adjacency_matrix.png', bbox_inches='tight', dpi=400) # pdf is too heavy
+            plt.show()
         
         ##########
+
+        if not simple_run:
         
-        rcm = list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=smallest_degree))
-        
-        B = nx.adjacency_matrix(self.nx_graph, nodelist=rcm)
-        img, ax = plt.subplots(1, 1, figsize=(20, 20))
-        pic = sns.heatmap(B.todense(), cbar=False, square=True, linewidths=0, annot=False, cmap=mcm.gray, ax=ax)
-        
-        node_classes = nx.get_node_attributes(self.nx_graph, "class")
-        
-        ax.set_xticks(range(len(rcm)))
-        ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for xtick, color in zip(ax.get_xticklabels(), colors):
-            xtick.set_color(color)
+            rcm = list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=smallest_degree))
             
-        ax.set_yticks(range(len(rcm)))
-        ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for ytick, color in zip(ax.get_yticklabels(), colors):
-            ytick.set_color(color)
-  
-        ax.set_title(f'Cuthill-McKee adjacency matrix by smallest degree ({dataset_name})')
-        plt.savefig(f'{fig_path}adjacency_matrix_smallest_degree.png', bbox_inches='tight', dpi=400) # pdf is too heavy
-        plt.show()
+            B = nx.adjacency_matrix(self.nx_graph, nodelist=rcm)
+            img, ax = plt.subplots(1, 1, figsize=(20, 20))
+            pic = sns.heatmap(B.todense(), cbar=False, square=True, linewidths=0, annot=False, cmap=mcm.gray, ax=ax)
+            
+            node_classes = nx.get_node_attributes(self.nx_graph, "class")
+            
+            ax.set_xticks(range(len(rcm)))
+            ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for xtick, color in zip(ax.get_xticklabels(), colors):
+                xtick.set_color(color)
+                
+            ax.set_yticks(range(len(rcm)))
+            ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for ytick, color in zip(ax.get_yticklabels(), colors):
+                ytick.set_color(color)
+    
+            ax.set_title(f'Cuthill-McKee adjacency matrix by smallest degree ({dataset_name})')
+            plt.savefig(f'{fig_path}adjacency_matrix_smallest_degree.png', bbox_inches='tight', dpi=400) # pdf is too heavy
+            plt.show()
         
         ##########
         
@@ -619,35 +624,39 @@ class DataProcessor:
         
         G = self.nx_graph
         
-        if not picture_only: # remove that line
-        
-            features['Number of nodes'] = G.number_of_nodes()
-            features['Number of edges'] = G.number_of_edges()
-            features['Density'] = nx.density(G)
+        features['Number of nodes'] = G.number_of_nodes()
+        features['Number of edges'] = G.number_of_edges()
+        features['Density'] = nx.density(G)
+        if not simple_run:
             features['Self-loop edges'] = list(nx.selfloop_edges(G))
-            features['Is connected'] = nx.is_connected(G)
-            features['Number of cc'] = nx.number_connected_components(G)
+        features['Is connected'] = nx.is_connected(G)
+        features['Number of cc'] = nx.number_connected_components(G)
+        if not simple_run:
             features['Number of isolated nodes'] = nx.number_of_isolates(G)
             features['Is planar'] = nx.is_planar(G)
 
-            if features['Number of cc'] > 1:
-                G = G.subgraph(max(nx.connected_components(G))).copy()
-                # mapping = {on:f'{nn}' for nn, on in enumerate(G.nodes())}
-                # G = nx.relabel_nodes(G, mapping)
-                features['Number of nodes in largest cc'] = G.number_of_nodes()
+        if features['Number of cc'] > 1:
+            G = G.subgraph(max(nx.connected_components(G))).copy()
+            # mapping = {on:f'{nn}' for nn, on in enumerate(G.nodes())}
+            # G = nx.relabel_nodes(G, mapping)
+            features['Number of nodes in largest cc'] = G.number_of_nodes()
 
-            features['Diameter'] = nx.diameter(G)
-            features['Radius'] = nx.radius(G)
-            features['Transitivity'] = nx.transitivity(G)
+        features['Diameter'] = nx.diameter(G)
+        features['Radius'] = nx.radius(G)
+        features['Transitivity'] = nx.transitivity(G)
+        if not simple_run:
             features['Number of multi edges'] = self.number_of_multi_edges(G)
 
-            degrees_of_G = [d for node, d in G.degree()]
-            features['Max degree'] = np.max(degrees_of_G)
-            features['Mean degree'] = np.mean(degrees_of_G)
-            features['Min degree'] = np.min(degrees_of_G)
+        degrees_of_G = [d for node, d in G.degree()]
+        features['Max degree'] = np.max(degrees_of_G)
+        features['Mean degree'] = np.mean(degrees_of_G)
+        features['Min degree'] = np.min(degrees_of_G)
 
-            features['Global efficiency'] = nx.global_efficiency(G)
-            features['Local efficiency'] = nx.local_efficiency(G)
+        features['Global efficiency'] = nx.global_efficiency(G)
+        features['Local efficiency'] = nx.local_efficiency(G)
+
+        if not simple_run:
+
             features['Degree assortativity coefficient'] = nx.degree_assortativity_coefficient(G)
             features['Class assortativity coefficient'] = nx.attribute_assortativity_coefficient(G, "class")
             features['Average clustering'] = nx.average_clustering(G)
@@ -794,231 +803,231 @@ class DataProcessor:
             features['Max_katz_centrality_node'][str(selected_node)] = [self.class_to_int_mapping[node_classes[selected_node]], f'degree: {G.degree[selected_node]}', f'degree centrality: {cd[selected_node]}', f'eigenvector centrality: {ce[selected_node]}', f'closeness centrality: {ccl[selected_node]}', f'betweenness centrality: {cb[selected_node]}', f'katz centrality: {ck[selected_node]}']
 
             # features['PageRank'] = nx.pagerank(G, alpha=0.8)
-        
-        cc = []
-        for node in G.nodes:
-            cc.append(nx.clustering(G, node))
-        
-        ##########
-        G_max_clique = G.subgraph(features['Max largest clique'])
-        pos = nx.spring_layout(G_max_clique, iterations=10)
-        plt.clf()
-        fig, ax = plt.subplots(1, 1, figsize=fig_size)
-        ax.axis('off')
-        plt.title(f'Max largest clique ({dataset_name})')
-
-        node_classes = nx.get_node_attributes(G_max_clique, "class")
-        unique_node_classes = np.unique(list(node_classes.values())).astype(int)
-        unique_node_classes = np.array([self.class_to_int_mapping[c] for c in unique_node_classes])
-        current_node_colors = []
-        for node in G_max_clique.nodes:
-            current_node_colors.append(self.class_colors[self.class_to_int_mapping[node_classes[node]]])
-        nx.draw_networkx_nodes(G_max_clique, pos=pos, node_color=current_node_colors, node_size=304, ax=ax)
-        nx.draw_networkx_labels(G_max_clique, pos=pos, labels={node:node for node in G_max_clique.nodes}, font_size=8, font_color='w')
-
-        nx.draw_networkx_edges(G_max_clique, pos=pos, alpha=0.15, width=1, edge_cmap=plt.cm.Greys, edge_color=list(nx.get_edge_attributes(G_max_clique, 'ibd_sum').values()), ax=ax)
-
-        for k, v in self.class_colors.items():
-            if k in unique_node_classes:
-                plt.scatter([],[], c=v, label=k)
-
-        plt.legend()
-
-        plt.savefig(f'{fig_path}largest_clique.pdf')
-        plt.show()
-        
-        ##########
-        
-        spl = []
-        splw = []
-        spl_dict = dict(nx.shortest_path_length(G))
-        splw_dict = dict(nx.shortest_path_length(G, weight='ibd_sum'))
-        for source in G.nodes:
-            for target in G.nodes:
-                spl_curr = spl_dict[source][target]
-                splw_curr = splw_dict[source][target]
-                if spl_curr:
-                    spl.append(spl_curr)
-                if splw_curr:
-                    splw.append(splw_curr)
-        
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=fig_size)
-        ax.set_title(f'Distribution of shortest paths ({dataset_name})')
-        n, bins, patches = ax.hist(spl, bins=100, color='#253957', edgecolor='white', linewidth=1.2, density=False)
-
-        ax.set_xlabel('Path length')
-        ax.set_ylabel('Amount of paths')
-        plt.savefig(f'{fig_path}shortest_path_dist.pdf', bbox_inches="tight")
-        plt.show()
-        
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=fig_size)
-        ax.set_title(f'Distribution of weighted shortest paths ({dataset_name})')
-        n, bins, patches = ax.hist(splw, bins=100, color='#253957', edgecolor='white', linewidth=1.2, density=False)
-
-        ax.set_xlabel('Path length')
-        ax.set_ylabel('Amount of weighted paths')
-        plt.savefig(f'{fig_path}weighted_shortest_path_dist.pdf', bbox_inches="tight")
-        plt.show()
-        
-        ##########
-        
-        all_centralities = [cda, cea, ccla, cba, cka]
-
-        centrality_correlation = np.zeros((len(all_centralities), len(all_centralities)))
-        for i in range(len(all_centralities)):
-            for j in range(len(all_centralities)):
-                centrality_correlation[i, j] = pearsonr(all_centralities[i], all_centralities[j])[0]
-
-        plt.clf()
-        plt.title(f'Centrality correlation ({dataset_name})')
-        centralities = ['degree', 'eigenvector', 'closeness', 'betweenness', 'katz']
-        sns.heatmap(centrality_correlation, xticklabels=centralities, yticklabels=centralities, annot=True, fmt=".2f", linewidths=.5, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True))
-        plt.xticks(rotation=90)
-        plt.savefig(f'{fig_path}centralities_correlation.pdf', bbox_inches="tight")
-        plt.show()
             
-        ##########
+            cc = []
+            for node in G.nodes:
+                cc.append(nx.clustering(G, node))
             
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=fig_size)
-        ax.set_title(f'Distribution of clustering coefficient ({dataset_name})')
-        n, bins, patches = ax.hist(cc, bins=100, color='#253957', edgecolor='white', linewidth=1.2)
-        ax.set_xlabel('Clustering coefficient')
-        ax.set_ylabel('Number of nodes')
-        plt.savefig(f'{fig_path}clustering_dist.pdf', bbox_inches="tight")
-        plt.show()
-        
-        ##########
-        
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=fig_size)
-        # best fit of data
-        (mu, sigma) = norm.fit(degrees_of_G)
+            ##########
+            G_max_clique = G.subgraph(features['Max largest clique'])
+            pos = nx.spring_layout(G_max_clique, iterations=10)
+            plt.clf()
+            fig, ax = plt.subplots(1, 1, figsize=fig_size)
+            ax.axis('off')
+            plt.title(f'Max largest clique ({dataset_name})')
 
-        # the histogram of the data
-        n, bins, patches = ax.hist(degrees_of_G, bins=100, density=True, label='observed', color='#253957', edgecolor='white', linewidth=1.2)
+            node_classes = nx.get_node_attributes(G_max_clique, "class")
+            unique_node_classes = np.unique(list(node_classes.values())).astype(int)
+            unique_node_classes = np.array([self.class_to_int_mapping[c] for c in unique_node_classes])
+            current_node_colors = []
+            for node in G_max_clique.nodes:
+                current_node_colors.append(self.class_colors[self.class_to_int_mapping[node_classes[node]]])
+            nx.draw_networkx_nodes(G_max_clique, pos=pos, node_color=current_node_colors, node_size=304, ax=ax)
+            nx.draw_networkx_labels(G_max_clique, pos=pos, labels={node:node for node in G_max_clique.nodes}, font_size=8, font_color='w')
 
-        # add a 'best fit' line
-        y = norm.pdf(bins, mu, sigma)
-        l = ax.plot(bins, y, 'r--', linewidth=2, label='normal approximation')
-        
-        scipy_hat_alpha, scipy_loc, scipy_scale = powerlaw.fit(degrees_of_G)
-        y = powerlaw.pdf(bins, scipy_hat_alpha, round(scipy_loc), scipy_scale)
-        l = ax.plot(bins[1:], y[1:], '--', linewidth=2, label='powerlaw approximation', color='lime')
+            nx.draw_networkx_edges(G_max_clique, pos=pos, alpha=0.15, width=1, edge_cmap=plt.cm.Greys, edge_color=list(nx.get_edge_attributes(G_max_clique, 'ibd_sum').values()), ax=ax)
 
-        #plot
-        ax.set_xlabel('Degree of node')
-        ax.set_ylabel('Probability of degree')
-        plt.title(f'Histogram of degree dist ({dataset_name}): ' + r'$\mu=%.1f,\ \sigma=%.1f,\ \alpha=%.1f,\ loc=%.1f,\ scale=%.1f$' %(mu, sigma, scipy_hat_alpha, scipy_loc, scipy_scale))
-        # plt.grid(True)
-        ax.legend(fontsize="10")
-        plt.savefig(f'{fig_path}deg_dist_approx.pdf', bbox_inches="tight")
+            for k, v in self.class_colors.items():
+                if k in unique_node_classes:
+                    plt.scatter([],[], c=v, label=k)
 
-        plt.show()
-        
-        ##########
-        
-        nn = self.nx_graph.number_of_nodes()
-        i = 2
-        while 1:
+            plt.legend()
+
+            plt.savefig(f'{fig_path}largest_clique.pdf')
+            plt.show()
+            
+            ##########
+            
+            spl = []
+            splw = []
+            spl_dict = dict(nx.shortest_path_length(G))
+            splw_dict = dict(nx.shortest_path_length(G, weight='ibd_sum'))
+            for source in G.nodes:
+                for target in G.nodes:
+                    spl_curr = spl_dict[source][target]
+                    splw_curr = splw_dict[source][target]
+                    if spl_curr:
+                        spl.append(spl_curr)
+                    if splw_curr:
+                        splw.append(splw_curr)
+            
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=fig_size)
+            ax.set_title(f'Distribution of shortest paths ({dataset_name})')
+            n, bins, patches = ax.hist(spl, bins=100, color='#253957', edgecolor='white', linewidth=1.2, density=False)
+
+            ax.set_xlabel('Path length')
+            ax.set_ylabel('Amount of paths')
+            plt.savefig(f'{fig_path}shortest_path_dist.pdf', bbox_inches="tight")
+            plt.show()
+            
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=fig_size)
+            ax.set_title(f'Distribution of weighted shortest paths ({dataset_name})')
+            n, bins, patches = ax.hist(splw, bins=100, color='#253957', edgecolor='white', linewidth=1.2, density=False)
+
+            ax.set_xlabel('Path length')
+            ax.set_ylabel('Amount of weighted paths')
+            plt.savefig(f'{fig_path}weighted_shortest_path_dist.pdf', bbox_inches="tight")
+            plt.show()
+            
+            ##########
+            
+            all_centralities = [cda, cea, ccla, cba, cka]
+
+            centrality_correlation = np.zeros((len(all_centralities), len(all_centralities)))
+            for i in range(len(all_centralities)):
+                for j in range(len(all_centralities)):
+                    centrality_correlation[i, j] = pearsonr(all_centralities[i], all_centralities[j])[0]
+
+            plt.clf()
+            plt.title(f'Centrality correlation ({dataset_name})')
+            centralities = ['degree', 'eigenvector', 'closeness', 'betweenness', 'katz']
+            sns.heatmap(centrality_correlation, xticklabels=centralities, yticklabels=centralities, annot=True, fmt=".2f", linewidths=.5, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True))
+            plt.xticks(rotation=90)
+            plt.savefig(f'{fig_path}centralities_correlation.pdf', bbox_inches="tight")
+            plt.show()
+                
+            ##########
+                
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=fig_size)
+            ax.set_title(f'Distribution of clustering coefficient ({dataset_name})')
+            n, bins, patches = ax.hist(cc, bins=100, color='#253957', edgecolor='white', linewidth=1.2)
+            ax.set_xlabel('Clustering coefficient')
+            ax.set_ylabel('Number of nodes')
+            plt.savefig(f'{fig_path}clustering_dist.pdf', bbox_inches="tight")
+            plt.show()
+            
+            ##########
+            
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=fig_size)
+            # best fit of data
+            (mu, sigma) = norm.fit(degrees_of_G)
+
+            # the histogram of the data
+            n, bins, patches = ax.hist(degrees_of_G, bins=100, density=True, label='observed', color='#253957', edgecolor='white', linewidth=1.2)
+
+            # add a 'best fit' line
+            y = norm.pdf(bins, mu, sigma)
+            l = ax.plot(bins, y, 'r--', linewidth=2, label='normal approximation')
+            
+            scipy_hat_alpha, scipy_loc, scipy_scale = powerlaw.fit(degrees_of_G)
+            y = powerlaw.pdf(bins, scipy_hat_alpha, round(scipy_loc), scipy_scale)
+            l = ax.plot(bins[1:], y[1:], '--', linewidth=2, label='powerlaw approximation', color='lime')
+
+            #plot
+            ax.set_xlabel('Degree of node')
+            ax.set_ylabel('Probability of degree')
+            plt.title(f'Histogram of degree dist ({dataset_name}): ' + r'$\mu=%.1f,\ \sigma=%.1f,\ \alpha=%.1f,\ loc=%.1f,\ scale=%.1f$' %(mu, sigma, scipy_hat_alpha, scipy_loc, scipy_scale))
+            # plt.grid(True)
+            ax.legend(fontsize="10")
+            plt.savefig(f'{fig_path}deg_dist_approx.pdf', bbox_inches="tight")
+
+            plt.show()
+            
+            ##########
+            
+            nn = self.nx_graph.number_of_nodes()
+            i = 2
+            while 1:
+                kG=nx.k_core(G,k=i)
+                if kG.number_of_nodes() == 0:
+                    break
+                i += 1
+            i -= 1
             kG=nx.k_core(G,k=i)
-            if kG.number_of_nodes() == 0:
-                break
-            i += 1
-        i -= 1
-        kG=nx.k_core(G,k=i)
-        pos = nx.spring_layout(kG,iterations=10)
-        plt.clf()
-        fig, ax = plt.subplots(1, 1, figsize=(12, 12))
-        ax.axis('off')
-        plt.title(f'k-core decomposition, k: {i}, number of nodes: {kG.number_of_nodes()} ({dataset_name})')
+            pos = nx.spring_layout(kG,iterations=10)
+            plt.clf()
+            fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+            ax.axis('off')
+            plt.title(f'k-core decomposition, k: {i}, number of nodes: {kG.number_of_nodes()} ({dataset_name})')
 
-        node_classes = nx.get_node_attributes(kG, "class")
-        unique_node_classes = np.unique(list(node_classes.values())).astype(int)
-        unique_node_classes = np.array([self.class_to_int_mapping[c] for c in unique_node_classes])
-        current_node_colors = []
-        for node in kG.nodes:
-            current_node_colors.append(self.class_colors[self.class_to_int_mapping[node_classes[node]]])
-        nx.draw_networkx_nodes(kG, pos=pos, node_color=current_node_colors, node_size=104, ax=ax)
-        nx.draw_networkx_labels(kG, pos=pos, labels={node:node for node in kG.nodes}, font_size=4, font_color='w')
+            node_classes = nx.get_node_attributes(kG, "class")
+            unique_node_classes = np.unique(list(node_classes.values())).astype(int)
+            unique_node_classes = np.array([self.class_to_int_mapping[c] for c in unique_node_classes])
+            current_node_colors = []
+            for node in kG.nodes:
+                current_node_colors.append(self.class_colors[self.class_to_int_mapping[node_classes[node]]])
+            nx.draw_networkx_nodes(kG, pos=pos, node_color=current_node_colors, node_size=104, ax=ax)
+            nx.draw_networkx_labels(kG, pos=pos, labels={node:node for node in kG.nodes}, font_size=4, font_color='w')
 
-        nx.draw_networkx_edges(kG, pos=pos, alpha=0.35, width=1, edge_cmap=plt.cm.Greys, edge_color=list(nx.get_edge_attributes(kG, 'ibd_sum').values()), ax=ax)
+            nx.draw_networkx_edges(kG, pos=pos, alpha=0.35, width=1, edge_cmap=plt.cm.Greys, edge_color=list(nx.get_edge_attributes(kG, 'ibd_sum').values()), ax=ax)
 
-        for k, v in self.class_colors.items():
-            if k in unique_node_classes:
-                plt.scatter([],[], c=v, label=k)
+            for k, v in self.class_colors.items():
+                if k in unique_node_classes:
+                    plt.scatter([],[], c=v, label=k)
 
-        plt.legend()
+            plt.legend()
 
-        plt.savefig(f'{fig_path}k_core_{i}.pdf', bbox_inches="tight")
-        plt.show()
-        
-        ##########
-        
-        simrank_similarity = nx.simrank_similarity(self.nx_graph)
-        simrank_similarity_matrix = np.empty((len(self.nx_graph), len(self.nx_graph)))
-        for source in self.nx_graph.nodes:
-            for target in self.nx_graph.nodes:
-                simrank_similarity_matrix[source, target] = simrank_similarity[source][target]
-
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=(20, 20))
-        plt.title(f'Simrank similarity ({dataset_name})')
-        pic = sns.heatmap(simrank_similarity_matrix, square=True, linewidths=0, annot=False, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
-        
-        node_classes = nx.get_node_attributes(self.nx_graph, "class")
-        
-        ax.set_xticks(range(len(self.nx_graph)))
-        ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in self.nx_graph.nodes], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in self.nx_graph.nodes]
-        for xtick, color in zip(ax.get_xticklabels(), colors):
-            xtick.set_color(color)
+            plt.savefig(f'{fig_path}k_core_{i}.pdf', bbox_inches="tight")
+            plt.show()
             
-        ax.set_yticks(range(len(self.nx_graph)))
-        ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in self.nx_graph.nodes], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in self.nx_graph.nodes]
-        for ytick, color in zip(ax.get_yticklabels(), colors):
-            ytick.set_color(color)
-        
-        plt.xticks(rotation=90)
-        plt.savefig(f'{fig_path}simrank_similarity.png', bbox_inches="tight", dpi=400)
-        plt.show()
-        
-        ##########
-        
-        simrank_similarity = nx.simrank_similarity(self.nx_graph)
-        simrank_similarity_matrix = np.empty((len(self.nx_graph), len(self.nx_graph)))
-        for source in self.nx_graph.nodes:
-            for target in self.nx_graph.nodes:
-                simrank_similarity_matrix[source, target] = simrank_similarity[source][target]
-
-        rcm = np.array(list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=None)))
-        plt.clf()
-        img, ax = plt.subplots(1, 1, figsize=(20, 20))
-        plt.title(f'Simrank similarity reordered by Cuthill-McKee algorithm ({dataset_name})')
-        simrank_similarity_matrix = simrank_similarity_matrix[rcm, :]
-        simrank_similarity_matrix = simrank_similarity_matrix[:, rcm]
-        pic = sns.heatmap(simrank_similarity_matrix, square=True, linewidths=0, annot=False, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
-        
-        node_classes = nx.get_node_attributes(self.nx_graph, "class")
-        
-        ax.set_xticks(range(len(rcm)))
-        ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for xtick, color in zip(ax.get_xticklabels(), colors):
-            xtick.set_color(color)
+            ##########
             
-        ax.set_yticks(range(len(rcm)))
-        ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
-        colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
-        for ytick, color in zip(ax.get_yticklabels(), colors):
-            ytick.set_color(color)
-        
-        plt.xticks(rotation=90)
-        plt.savefig(f'{fig_path}cuthill_mckee_simrank_similarity.png', bbox_inches="tight", dpi=400)
-        plt.show()
+            simrank_similarity = nx.simrank_similarity(self.nx_graph)
+            simrank_similarity_matrix = np.empty((len(self.nx_graph), len(self.nx_graph)))
+            for source in self.nx_graph.nodes:
+                for target in self.nx_graph.nodes:
+                    simrank_similarity_matrix[source, target] = simrank_similarity[source][target]
+
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=(20, 20))
+            plt.title(f'Simrank similarity ({dataset_name})')
+            pic = sns.heatmap(simrank_similarity_matrix, square=True, linewidths=0, annot=False, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+            
+            node_classes = nx.get_node_attributes(self.nx_graph, "class")
+            
+            ax.set_xticks(range(len(self.nx_graph)))
+            ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in self.nx_graph.nodes], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in self.nx_graph.nodes]
+            for xtick, color in zip(ax.get_xticklabels(), colors):
+                xtick.set_color(color)
+                
+            ax.set_yticks(range(len(self.nx_graph)))
+            ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in self.nx_graph.nodes], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in self.nx_graph.nodes]
+            for ytick, color in zip(ax.get_yticklabels(), colors):
+                ytick.set_color(color)
+            
+            plt.xticks(rotation=90)
+            plt.savefig(f'{fig_path}simrank_similarity.png', bbox_inches="tight", dpi=400)
+            plt.show()
+            
+            ##########
+            
+            simrank_similarity = nx.simrank_similarity(self.nx_graph)
+            simrank_similarity_matrix = np.empty((len(self.nx_graph), len(self.nx_graph)))
+            for source in self.nx_graph.nodes:
+                for target in self.nx_graph.nodes:
+                    simrank_similarity_matrix[source, target] = simrank_similarity[source][target]
+
+            rcm = np.array(list(nx.utils.cuthill_mckee_ordering(self.nx_graph, heuristic=None)))
+            plt.clf()
+            img, ax = plt.subplots(1, 1, figsize=(20, 20))
+            plt.title(f'Simrank similarity reordered by Cuthill-McKee algorithm ({dataset_name})')
+            simrank_similarity_matrix = simrank_similarity_matrix[rcm, :]
+            simrank_similarity_matrix = simrank_similarity_matrix[:, rcm]
+            pic = sns.heatmap(simrank_similarity_matrix, square=True, linewidths=0, annot=False, cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+            
+            node_classes = nx.get_node_attributes(self.nx_graph, "class")
+            
+            ax.set_xticks(range(len(rcm)))
+            ax.set_xticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for xtick, color in zip(ax.get_xticklabels(), colors):
+                xtick.set_color(color)
+                
+            ax.set_yticks(range(len(rcm)))
+            ax.set_yticklabels([f'{self.class_to_int_mapping[node_classes[node]]} ({node})' for node in rcm], fontsize=2)
+            colors = [self.class_colors[self.class_to_int_mapping[node_classes[node]]] for node in rcm]
+            for ytick, color in zip(ax.get_yticklabels(), colors):
+                ytick.set_color(color)
+            
+            plt.xticks(rotation=90)
+            plt.savefig(f'{fig_path}cuthill_mckee_simrank_similarity.png', bbox_inches="tight", dpi=400)
+            plt.show()
         
         with open(f'{fig_path}{dataset_name}_result.json', 'w') as f:
             json.dump(features, f, cls=NpEncoder)

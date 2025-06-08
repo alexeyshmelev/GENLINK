@@ -190,11 +190,11 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         sorted_bars = [bar for bar, x in sorted_bars_with_x]
 
         # Apply hatching to the first six bars as they appear in the plot
-        for i, bar in enumerate(sorted_bars):
-            if all_pvalues[i] > 0.05:
-                bar.set_hatch('//')
-                bar.set_edgecolor('red')
-                bar.set_linewidth(0)
+        # for i, bar in enumerate(sorted_bars):
+        #     if all_pvalues[i] > 0.05:
+        #         bar.set_hatch('//')
+        #         bar.set_edgecolor('red')
+        #         bar.set_linewidth(0)
             # else:
             #     print(all_pvalues[i])
 
@@ -220,19 +220,19 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         #     if k != 'Community detection':
         #         plt.scatter([],[], c=v, label=k)
 
-        if class_plot_only is None:
-            plt.title(f'Model performance for {dataset_dir}', fontsize=title_size)
-        else:
-            plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})', fontsize=title_size)
-        plt.xlabel('Model', fontsize=xlabel_size)
-        plt.ylabel('Mean f1-macro score', fontsize=ylabel_size)
+        # if class_plot_only is None:
+        #     plt.title(f'Model performance for {dataset_dir}', fontsize=title_size)
+        # else:
+        #     plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})', fontsize=title_size)
+        plt.xlabel('model', fontsize=xlabel_size)
+        plt.ylabel('f1-macro score', fontsize=ylabel_size)
         plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=8)  # Rotate x-axis labels for better readability
         ax = plt.gca()
-        for i in range(len(ax.get_xticklabels())):
-            if ax.get_xticklabels()[i].get_text() in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
-                break
-            else:
-                plt.setp(ax.get_xticklabels()[i], color='red', weight='bold')
+        # for i in range(len(ax.get_xticklabels())):
+        #     if ax.get_xticklabels()[i].get_text() in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
+        #         break
+        #     else:
+        #         plt.setp(ax.get_xticklabels()[i], color='red', weight='bold')
 
 
         plt.legend()
