@@ -2,17 +2,26 @@ import argparse
 from os import listdir
 from os.path import isfile, join
 import sys
-import models
+import logging
+import networkx as nx
 import inspect
 import numpy as np
 import json
+import torch
 from runner import Runner
-from multiprocessing import freeze_support
+import multiprocessing as mp
+
+nxl = logging.getLogger("networkx")
+nxl.addHandler(logging.StreamHandler())
+nxl.setLevel(logging.DEBUG)
+
+print('Your version of networkx: ', nx.__version__)
+print('Your supported networkx backends: ', nx.betweenness_centrality.backends)
 
 
 
 if __name__ == '__main__':
-    # freeze_support()
+    mp.set_start_method('fork')
 
     parser = argparse.ArgumentParser(description='GENLINK')
 
@@ -26,6 +35,9 @@ if __name__ == '__main__':
     parser.add_argument('--fp16', action='store_true', help='Whether to use low precision or not')
 
     args = parser.parse_args()
+
+    if args.fp16:
+        torch.set_default_dtype(torch.float16)
 
     data_files = [join(args.data_folder, f) for f in listdir(args.data_folder) if isfile(join(args.data_folder, f))]
     for f in data_files:

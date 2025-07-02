@@ -1,4 +1,4 @@
-pandas==1.2.4
+pandas==1.5.3
 seaborn==0.13.1
 numba==0.58.1
 numpy==1.26.3

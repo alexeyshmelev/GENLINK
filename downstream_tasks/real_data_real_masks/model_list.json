@@ -1,6 +1,6 @@
 {
-    "gnn":{"GL_MLP_3l_512h":["graph_based"],
-           "GL_TAGConv_3l_512h_w_k3_gnorm":["graph_based"]},
+    "gnn":{"GL_TAGConv_3l_512h_w_k3_gnorm":["one_hot", "graph_based"],
+           "GL_MLP_3l_512h":["graph_based"]},
     "heuristic":[],
     "community_detection":[]
 }

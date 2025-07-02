@@ -1,0 +1,13 @@
+import pandas as pd
+import networkx as nx
+
+url = "https://data.rapids.ai/cugraph/datasets/cit-Patents.csv"
+df = pd.read_csv(url, sep=" ", names=["src", "dst"], dtype="float")
+print(df)
+print('OLOLOLOLOLOLOL', nx.from_pandas_edgelist.backends)
+G = nx.from_pandas_edgelist(df, source="src", target="dst")
+
+print(type(G))
+
+%time result = nx.betweenness_centrality(G, k=10)
+# result = nx.betweenness_centrality(G, k=10)

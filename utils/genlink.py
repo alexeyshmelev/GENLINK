@@ -1,7 +1,8 @@
 import gc
 import os
 import json
-import time
+import copy
+import math
 import torch
 import pickle
 import random
@@ -21,8 +22,11 @@ from collections import OrderedDict, Counter
 from torch_geometric.utils import to_networkx
 import matplotlib.colors as colors
 import numba
+import hashlib
+import pickle
 from numba import njit, prange
 # numba.config.THREADING_LAYER = 'workqueue'
+from torch.amp import autocast, GradScaler
 import matplotlib.pyplot as plt
 import matplotlib.cm as mcm
 import torch.nn.functional as F
@@ -236,7 +240,7 @@ class DataProcessor:
         self.node_classes_sorted: pd.DataFrame = self.get_node_classes(self.df)
         self.class_to_int_mapping: dict[int, str] = {i:n for i, n in enumerate(self.classes)}
         self.class_colors = self.get_class_colors()
-        self.nx_graph = self.make_networkx_graph() # line order matters because self.df is modified in above functions
+        # self.nx_graph = self.make_networkx_graph() # line order matters because self.df is modified in above functions
         self.train_nodes = None
         self.valid_nodes = None
         self.test_nodes = None
@@ -251,6 +255,33 @@ class DataProcessor:
         self.disable_printing = disable_printing
         self.no_mask_class_in_df = no_mask_class_in_df
         # self.rng = np.random.default_rng(42)
+
+    
+    @property
+    def nx_graph(self):
+        return self.make_networkx_graph()
+    
+    # @property
+    # def nx_graph(self):
+    #     if not hasattr(self, "_nx_graph"):
+    #         self._nx_graph = self.make_networkx_graph()
+    #     return self._nx_graph
+    
+    
+    # def __deepcopy__(self, memo):
+    #     new_obj = self.__class__.__new__(self.__class__)
+    #     memo[id(self)] = new_obj
+
+    #     for attr, value in self.__dict__.items():
+    #         print(attr)
+    #         if attr in ['df']:
+    #             setattr(new_obj, attr, self.df.copy(deep=True))  # faster than deepcopy
+    #         elif attr in ['nx_graph']:
+    #             setattr(new_obj, attr, self.nx_graph.copy())
+    #         else:
+    #             setattr(new_obj, attr, copy.deepcopy(value, memo))
+
+    #     return new_obj
         
     def get_class_colors(self):
         colors = ['#00ff72', '#004eff', '#a900ff', '#ff002f', '#ffc800', '#00ffff', '#6f6f6f', '#ff9900']
@@ -259,13 +290,15 @@ class DataProcessor:
         # assert len(self.classes) <= len(colors)
         return {self.classes[i]:generated_colors[i] for i in range(len(self.classes))}
     
+    
     def make_networkx_graph(self):
         G = nx.from_pandas_edgelist(self.df, source='node_id1', target='node_id2', edge_attr=['ibd_sum', 'ibd_n'])
-        assert type(G) is nx.classes.graph.Graph
-        node_attr = dict()
-        for i in range(self.node_classes_sorted.shape[0]):
-            row = self.node_classes_sorted.iloc[i, :]
-            node_attr[row[0]] = {'class':row[1]}
+        # assert type(G) is nx.classes.graph.Graph
+        # node_attr = dict()
+        # for i in range(self.node_classes_sorted.shape[0]):
+        #     row = self.node_classes_sorted.iloc[i, :]
+        #     node_attr[row[0]] = {'class':row[1]}
+        node_attr = dict(zip(self.node_classes_sorted.iloc[:, 0], ({'class': cls} for cls in self.node_classes_sorted.iloc[:, 1])))
         nx.set_node_attributes(G, node_attr)
 
         mask = {node:{'mask':(cls != self.classes.index('masked')) if 'masked' in self.classes else True} for node, cls in nx.get_node_attributes(G,'class').items()}
@@ -1359,17 +1392,17 @@ class DataProcessor:
             if specific_node != -1:
                 specific_masked_node_hashmap[specific_node] = True
             if masking:
-                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(dtype=np.float64), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
                 # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes) if no_mask_class_in_df else len(self.classes)-1, len(curr_nodes), log_edge_weights)
                 # node_mask = self.get_mask(curr_nodes, self.mask_nodes)
             else:
                 # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
-                features = self.make_graph_based_features_ram_efficient(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
+                features = self.make_graph_based_features_ram_efficient(df.to_numpy(dtype=np.float64), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
         else:
             raise Exception('Such feature type is not known!')
         
         targets = self.construct_node_classes(numba.typed.List(curr_nodes), dict_node_classes, masked_node_hashmap, (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None)
-        weighted_edges = self.construct_edges(df.to_numpy(), hashmap)
+        weighted_edges = self.construct_edges(df.to_numpy(dtype=np.float64), hashmap)
 
         # sort edges
         node_mask = self.get_mask(numba.typed.List(curr_nodes), (numba.typed.List(self.mask_nodes) if len(self.mask_nodes) != 0 else numba.typed.List.empty_list(numba.types.int64)) if self.mask_nodes is not None else None, masked_node_hashmap)
@@ -1423,9 +1456,9 @@ class DataProcessor:
                 self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
                 self.df_for_training = self.df.copy()
                 if masking:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes + self.mask_nodes))
                 else:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes))
                 self.df_for_training = self.df_for_training.drop(drop_rows)
 
                 # make training samples
@@ -1451,11 +1484,11 @@ class DataProcessor:
                 # make validation samples
                 if not skip_train_val:
                     if masking:
-                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                        np.array(self.train_nodes + self.mask_nodes),
                                                                                        np.array(self.valid_nodes))
                     else:
-                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                        np.array(self.train_nodes),
                                                                                        np.array(self.valid_nodes))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
@@ -1487,11 +1520,11 @@ class DataProcessor:
 
                 # make testing samples
                 if masking:
-                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                np.array(self.train_nodes + self.mask_nodes),
                                                                                np.array(self.test_nodes))
                 else:
-                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                    np.array(self.train_nodes),
                                                                                    np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
@@ -1526,9 +1559,9 @@ class DataProcessor:
                 self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
                 self.df_for_training = self.df.copy()
                 if masking:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes + self.mask_nodes))
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes + self.mask_nodes))
                 else:
-                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(), numba.typed.List(self.train_nodes))
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes))
                 self.df_for_training = self.df_for_training.drop(drop_rows)
 
                 # make training samples
@@ -1556,11 +1589,11 @@ class DataProcessor:
                 if not skip_train_val:
                     # print('VALID NODES', sum(self.valid_nodes), len(self.valid_nodes))
                     if masking:
-                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                            np.array(self.train_nodes + self.mask_nodes),
                                                                                            np.array(self.valid_nodes))
                     else:
-                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                            np.array(self.train_nodes),
                                                                                            np.array(self.valid_nodes))
                     for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
@@ -1594,11 +1627,11 @@ class DataProcessor:
 
                 # make testing samples
                 if masking:
-                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                        np.array(self.train_nodes + self.mask_nodes),
                                                                                        np.array(self.test_nodes))
                 else:
-                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(),
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
                                                                                        np.array(self.train_nodes),
                                                                                        np.array(self.test_nodes))
                 for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
@@ -2829,6 +2862,673 @@ class Trainer:
                             self.evaluation()
                             self.model.train()
                             self.data.array_of_graphs_for_training[0].to(self.device)
+
+                        optimizer.zero_grad()
+                        out = self.model(data_curr.to(self.device))
+                        loss = criterion(out, data_curr.y)
+                        loss.backward()
+                        optimizer.step()
+                        scheduler.step()
+
+            else:
+                raise Exception('Trainer is not implemented for such feature type name!')
+
+            return self.test(mask=self.masking)
+
+
+
+class TorchGeometricGraphDataset(Dataset):
+    def __init__(self, data, init_graph, tg_init_graph, feature_type, phase, train_node_list, mask_node_list, val_node_list=None, test_node_list=None):
+        self.init_graph = init_graph
+        self.tg_init_graph = tg_init_graph
+
+        self.mask_class_idx = data.classes.index('masked')
+
+        assert len(train_node_list) > 0
+        assert len(mask_node_list) > 0
+        assert phase in ['train', 'val', 'test']
+
+        self.train_node_list = train_node_list
+        self.val_node_list = val_node_list
+        self.test_node_list = test_node_list
+        self.mask_node_list = mask_node_list
+
+        self.feature_type = feature_type
+        self.phase = phase
+        
+        if phase == 'train':
+            self.idx_to_node_mapping = {idx:node for idx, node in enumerate(train_node_list)}
+        elif phase == 'val':
+            not_isolated_node_list = []
+            for node in val_node_list:
+                G = self.init_graph.subgraph(train_node_list + mask_node_list + [node])
+                if not nx.is_isolate(G, node):
+                    not_isolated_node_list.append(node)
+            self.idx_to_node_mapping = {idx:node for idx, node in enumerate(not_isolated_node_list)}
+        elif phase == 'test':
+            not_isolated_node_list = []
+            for node in test_node_list:
+                G = self.init_graph.subgraph(train_node_list + mask_node_list + [node])
+                if not nx.is_isolate(G, node):
+                    not_isolated_node_list.append(node)
+            self.idx_to_node_mapping = {idx:node for idx, node in enumerate(not_isolated_node_list)}
+        else:
+            raise 'No such phase!'
+
+    def __len__(self):
+        if self.feature_type == 'one_hot':
+            return len(self.idx_to_node_mapping)
+        elif self.feature_type == 'graph_based':
+            if self.phase == 'train':
+                return 1
+            else:
+                return len(self.idx_to_node_mapping)
+        else:
+            raise 'No such feature type!'
+
+    def __getitem__(self, idx):
+        if self.feature_type == 'one_hot':
+            if self.phase == 'train':
+                node = self.idx_to_node_mapping[idx]
+                curr_tg_init_graph = self.tg_init_graph.clone()
+                assert np.all(curr_tg_init_graph.x[node].numpy() == np.array(self.init_graph.nodes[node]['x']))
+                assert np.argmax(curr_tg_init_graph.x[node].numpy()) == self.init_graph.nodes[node]['class']
+                curr_tg_init_graph.x[node] = 1/len(curr_tg_init_graph.x[node])
+                # assert node not in self.mask_node_list
+                assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                curr_tg_init_graph.mask[:] = False
+                curr_tg_init_graph.mask[node] = True
+                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
+                return subgraph
+            
+            elif self.phase == 'val' or self.phase == 'test':
+                node = self.idx_to_node_mapping[idx]
+                curr_tg_init_graph = self.tg_init_graph.clone()
+                assert np.all(curr_tg_init_graph.x[node].numpy() == np.array(self.init_graph.nodes[node]['x']))
+                assert np.argmax(curr_tg_init_graph.x[node].numpy()) == self.init_graph.nodes[node]['class']
+                curr_tg_init_graph.x[node] = 1/len(curr_tg_init_graph.x[node])
+                # assert node not in self.mask_node_list
+                assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                curr_tg_init_graph.mask[:] = False
+                curr_tg_init_graph.mask[node] = True
+                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
+                return subgraph
+            
+        elif self.feature_type == 'graph_based':
+            if self.phase == 'train':
+                curr_tg_init_graph = self.tg_init_graph.clone()
+                assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
+                return subgraph
+            
+            elif self.phase == 'val' or self.phase == 'test':
+                node = self.idx_to_node_mapping[idx]
+                curr_tg_init_graph = self.tg_init_graph.clone()
+                assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                assert np.allclose(curr_tg_init_graph.x[node].numpy(), np.array(self.init_graph.nodes[node]['x']))
+                assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                curr_tg_init_graph.mask[:] = False
+                curr_tg_init_graph.mask[node] = True
+                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
+                return subgraph
+
+
+
+class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with real masks for now with latest updates!!!
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0):
+        self.data = data
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
+        assert len(self.data.array_of_graphs_for_training) == len(self.data.array_of_graphs_for_validation) == len(self.data.array_of_graphs_for_testing) == 0
+
+        self.feature_type = feature_type
+        self.init_graph = self.data.nx_graph
+        if self.feature_type == 'one_hot': 
+            x = {node:{'x': ([0 if i != cls else 1 for i in range(len(self.data.classes) - 1)] if cls != self.data.classes.index('masked') else [1/(len(self.data.classes) - 1) for i in range(len(self.data.classes) - 1)]) if 'masked' in self.data.classes else [0 if i != cls else 1 for i in range(len(self.data.classes))]} for node, cls in nx.get_node_attributes(self.init_graph,'class').items()}
+            nx.set_node_attributes(self.init_graph, x)
+
+            self.tg_init_graph = self.from_nx_preserve_ids(self.init_graph, device='cpu', float_dtype=torch.float32)
+
+            # print(0.25 in self.tg_init_graph.x)
+
+            # print(self.tg_init_graph)
+
+        elif self.feature_type == 'graph_based':
+            
+            
+            masked_idx   = self.data.classes.index('masked')
+            num_cls_feat = len(self.data.classes) - 1          # drop “masked”
+
+            train_nodes_set = set(self.data.train_nodes)       # fast membership test
+            x_attr = {}                                        # will be attached to nx
+
+            for node in tqdm(self.init_graph.nodes()):
+                # ── accumulators per class ──────────────────────────────────
+                cnt_edges = [0.0] * num_cls_feat
+                sum_w     = [0.0] * num_cls_feat
+                sumsq_w   = [0.0] * num_cls_feat
+                max_w     = [0.0] * num_cls_feat
+                sum_seg   = [0.0] * num_cls_feat
+                cnt_vals  = [0]   * num_cls_feat
+
+                for nb in self.init_graph.neighbors(node):
+                    if nb not in train_nodes_set:
+                        continue                              # only training nodes
+
+                    col = int(self.init_graph.nodes[nb]['class'])
+                    if col == masked_idx:
+                        raise 'Training node can\'t be masked!'                              # neighbour is “masked”
+
+                    # edge attributes are guaranteed to exist
+                    edge_data = self.init_graph[node][nb]
+                    weight    = float(edge_data['ibd_sum'])   # no log‑transform
+                    segs      = float(edge_data['ibd_n'])
+
+                    cnt_edges[col] += 1.0
+                    sum_w[col]     += weight
+                    sumsq_w[col]   += weight * weight
+                    max_w[col]      = weight if weight > max_w[col] else max_w[col]
+                    sum_seg[col]   += segs
+                    cnt_vals[col]  += 1
+
+                # ── assemble a 5 × C feature vector ─────────────────────────
+                feats = []
+
+                # 1) edge counts
+                feats.extend(cnt_edges)
+
+                # 2) means
+                for c in range(num_cls_feat):
+                    mean = sum_w[c] / cnt_vals[c] if cnt_vals[c] else 0.0
+                    feats.append(mean)
+
+                # 3) standard deviations
+                for c in range(num_cls_feat):
+                    if cnt_vals[c]:
+                        var = (sumsq_w[c] / cnt_vals[c]) - (sum_w[c] / cnt_vals[c])**2
+                        std = math.sqrt(var) if var > 0 else 0.0
+                    else:
+                        std = 0.0
+                    feats.append(std)
+
+                # 4) maxima
+                feats.extend(max_w)
+
+                # 5) total number of IBD segments
+                feats.extend(sum_seg)
+
+                x_attr[node] = {'x': feats}
+
+            # attach fresh features to the NetworkX graph
+            nx.set_node_attributes(self.init_graph, x_attr)
+
+            # convert to PyTorch Geometric Data (CPU for now)
+            self.tg_init_graph = self.from_nx_preserve_ids(
+                self.init_graph,
+                device='cpu',
+                float_dtype=torch.float32,
+            )
+
+        else:
+            raise 'No such node feature option!'
+
+        self.model = None
+        self.gpuidx = cuda_device_specified
+        self.model_cls = model_cls
+        self.learning_rate = lr
+        self.weight_decay = wd
+        self.loss_fn = loss_fn
+        if masking and not no_mask_class_in_df:
+            self.weight = torch.tensor([1. for i in range(len(self.data.classes)-1)]).to(self.device) if weight is None else weight
+        else:
+            self.weight = torch.tensor([1. for i in range(len(self.data.classes))]).to(self.device) if weight is None else weight
+        if use_class_balance_weight:
+            if no_mask_class_in_df:
+                print('Using loss weights according to class balance')
+                all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
+                count_dict = Counter(all_classes)
+                count_dict = dict(sorted(count_dict.items()))
+                self.weight = torch.tensor(list(count_dict.values())).to(self.device)
+                self.weight = torch.max(self.weight) / self.weight
+            else:
+                print('Using loss weights according to class balance excluding masked class')
+                all_classes = self.data.node_classes_sorted['class_id'].to_numpy()
+                all_classes = all_classes[all_classes != self.data.classes.index('masked')]
+                count_dict = Counter(all_classes)
+                count_dict = dict(sorted(count_dict.items()))
+                self.weight = torch.tensor(list(count_dict.values())).to(self.device)
+                self.weight = torch.max(self.weight) / self.weight
+        self.batch_size = batch_size # not used by far
+        self.log_dir = log_dir
+        self.patience = patience
+        self.num_epochs = num_epochs
+        self.max_f1_score_macro = 0
+        self.patience_counter = 0
+        self.train_iterations_per_sample = train_iterations_per_sample
+        self.evaluation_steps = evaluation_steps
+        self.masking = masking
+        self.disable_printing = disable_printing
+        self.seed = seed
+        self.save_model_in_ram = save_model_in_ram
+        self.correct_and_smooth = correct_and_smooth
+        self.remove_saved_model_after_testing = remove_saved_model_after_testing
+        self.plot_cm = plot_cm
+        self.num_workers = num_workers
+            
+        self.post = CorrectAndSmooth(num_correction_layers=2, correction_alpha=0.9,
+                        num_smoothing_layers=1, smoothing_alpha=0.0001,
+                        autoscale=True) if self.correct_and_smooth else None
+
+
+    def from_nx_preserve_ids(self, G, device, float_dtype):
+
+        edges = [(u, v) for u, v in G.edges()]
+        edges += [(v, u) for u, v in G.edges()]
+        
+        edges_np = np.asarray(edges, dtype=np.int64).T
+        assert edges_np.shape[0] == 2
+        edge_index = torch.as_tensor(edges_np, device=device)
+
+        node_ids = np.asarray(G.nodes(), dtype=np.int64)
+        num_nodes = len(node_ids)
+        assert max(node_ids) == num_nodes - 1
+        assert min(node_ids) == 0
+
+        def build_node_tensor(key, is_bool=False):
+            first = next((d[key] for _, d in G.nodes(data=True) if key in d), 0)
+            if is_bool:
+                buf = torch.zeros(num_nodes, dtype=torch.bool, device=device)
+                for nid, d in G.nodes(data=True):
+                    buf[nid] = d[key]
+                return buf
+
+            first_t = torch.as_tensor(first, dtype=float_dtype)
+            # print(key, first_t.shape, first_t)
+            # assert False
+            buf = torch.zeros((num_nodes, *first_t.shape),
+                            dtype=float_dtype, device=device)
+            for nid, d in G.nodes(data=True):
+                buf[nid] = torch.as_tensor(d[key], dtype=float_dtype)
+            return buf
+
+        def build_edge_tensor(key):
+            vals = []
+            for u, v, attrs in G.edges(data=True):
+                val = torch.as_tensor(attrs[key], dtype=float_dtype)
+                vals.append(val)
+            vals += vals
+            return torch.tensor(vals).to(device)
+
+        node_keys = {'class', 'mask', 'x'}
+        edge_keys = {'ibd_sum', 'ibd_n'}
+
+        node_attrs = {k: build_node_tensor(k, is_bool=(k == "mask"))
+                    for k in node_keys}
+        edge_attrs = {k: build_edge_tensor(k) for k in edge_keys}
+
+        data_dict = dict(edge_index=edge_index, **node_attrs, **edge_attrs)
+        data = Data(**data_dict)
+
+        data.weight = data.ibd_sum
+        data.ibd_sum = None
+        data.ibd_n = None
+        data.num_classes = (
+            len(self.data.classes) - 1
+            if "masked" in self.data.classes else len(self.data.classes)
+        )
+        data.y = data["class"].long()
+        data["class"] = None
+
+        if hasattr(data, "mask") and data.mask.dtype != torch.bool:
+            data.mask = data.mask.to(torch.bool)
+
+        return data
+
+
+    def compute_metrics_cross_entropy(self, dataset_phase, mask=False, phase=None):
+        y_true = []
+        y_pred = []
+
+        dataset = TorchGeometricGraphDataset(data=self.data,
+                                             init_graph=self.init_graph,
+                                            tg_init_graph=self.tg_init_graph,
+                                            feature_type=self.feature_type,
+                                            phase=dataset_phase, 
+                                            train_node_list=self.data.train_nodes, 
+                                            mask_node_list=self.data.mask_nodes,
+                                            val_node_list=self.data.valid_nodes,
+                                            test_node_list=self.data.test_nodes)
+        loader = DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False, collate_fn=collate_fn)
+        pbar = tqdm(range(len(dataset)), desc='Compute metrics', disable=self.disable_printing)
+
+        if self.feature_type == 'one_hot':
+            # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+            for batch in loader:
+                batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                for sample in batch:
+                    # with autocast(device_type='cuda', dtype=torch.float16):
+                    assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
+                    p = F.softmax(self.model(sample)[sample.mask].to('cpu').float(), dim=0).numpy()
+                    y_pred.append(np.argmax(p))
+                    y_true.append(int(sample.y[sample.mask].to('cpu').numpy()))
+                    # sample.to('cpu')
+                    # graphs[i].to('cpu')
+
+                    pbar.update(1)
+        elif self.feature_type == 'graph_based':
+            if not mask:
+                # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+                for batch in loader:
+                    batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                    for sample in batch:
+                        if phase=='training':
+                            raise 'Not implemented yet!'
+                        elif phase=='scoring':
+                            p = F.softmax(self.model(sample)[sample.mask],
+                                        dim=0).to('cpu').detach().numpy()
+                            y_pred.append(np.argmax(p))
+                            y_true.append(sample.y[sample.mask].to('cpu').detach())
+                        else:
+                            raise Exception('No such phase!')
+                        # graphs[i].to('cpu')
+                        pbar.update(1)
+            else:
+                # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+                for batch in loader:
+                    batch = batch.to(self.device, non_blocking=True).to_data_list()
+
+                    for sample in batch:
+                        if phase=='training':
+                            raise 'Not implemented yet!'
+                        elif phase=='scoring':
+                            p = F.softmax(self.model(sample)[sample.mask],
+                                        dim=0).to('cpu').detach().numpy()
+                            y_pred.append(np.argmax(p))
+                            y_true.append(sample.y[sample.mask].to('cpu').detach().numpy().item())
+                        else:
+                            raise Exception('No such phase!')
+                        # graphs[i].to('cpu')
+                        pbar.update(1)
+        else:
+            raise Exception('Trainer is not implemented for such feature type name while calculating training scores!')
+
+        # if phase=='scoring':
+        #     print(len(graphs), len(y_true), len(y_pred), sum(y_true), sum(y_pred))
+        #     print(y_true)
+        #     print(y_pred)
+        #     assert False
+        return y_true, y_pred
+
+    def evaluation(self, mask=False):
+        self.model.eval()
+
+        with torch.no_grad():
+            y_true, y_pred = self.compute_metrics_cross_entropy(dataset_phase='val', mask=mask, phase='scoring')
+
+        if not self.disable_printing:
+            print('Evaluation report')
+            print(classification_report(y_true, y_pred))
+        for i in range(len(self.data.classes)):
+            if self.data.classes[i] != 'masked':
+                score_per_class = f1_score(y_true, y_pred, average='macro', labels=[i])
+                if not self.disable_printing:
+                    print(f"f1 macro score on valid dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+
+        current_f1_score_macro = f1_score(y_true, y_pred, average='macro')
+        if current_f1_score_macro > self.max_f1_score_macro:
+            self.patience_counter = 0
+            self.max_f1_score_macro = current_f1_score_macro
+            if not self.disable_printing:
+                print(f'f1 macro improvement to {self.max_f1_score_macro}')
+            torch.save(self.model.state_dict(), self.log_dir + '/model_best.bin')
+        else:
+            self.patience_counter += 1
+            if not self.disable_printing:
+                print(f'Metric was not improved for the {self.patience_counter}th time')
+
+    def test(self, mask=False):
+        self.model = self.model_cls(self.tg_init_graph).to(self.device)
+        self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
+        self.model.eval()
+        with torch.no_grad():
+            y_true, y_pred = self.compute_metrics_cross_entropy(dataset_phase='test', mask=mask, phase='scoring')
+        if not self.disable_printing:
+            print('Test report')
+            print(classification_report(y_true, y_pred))
+        
+        f1_macro_score = f1_score(y_true, y_pred, average='macro')
+        if not self.disable_printing:
+            print(f"f1 macro score on test dataset: {f1_macro_score}")
+        
+        f1_weighted_score = f1_score(y_true, y_pred, average='weighted')
+        if not self.disable_printing:
+            print(f"f1 weighted score on test dataset: {f1_weighted_score}")
+
+        recall_macro_score = recall_score(y_true, y_pred, average='macro')
+        if not self.disable_printing:
+            print(f"recall macro score on test dataset: {recall_macro_score}")
+
+        recall_weighted_score = recall_score(y_true, y_pred, average='weighted')
+        if not self.disable_printing:
+            print(f"recall weighted score on test dataset: {recall_weighted_score}")
+
+        precision_macro_score = precision_score(y_true, y_pred, average='macro')
+        if not self.disable_printing:
+            print(f"recall macro score on test dataset: {precision_macro_score}")
+
+        precision_weighted_score = precision_score(y_true, y_pred, average='weighted')
+        if not self.disable_printing:
+            print(f"recall weighted score on test dataset: {precision_weighted_score}")
+        
+        acc = accuracy_score(y_true, y_pred)
+        if not self.disable_printing:
+            print(f"accuracy score on test dataset: {acc}")
+        
+        f1_macro_score_per_class = dict()
+        
+        for i in range(len(self.data.classes)):
+            if self.data.classes[i] != 'masked':
+                score_per_class = f1_score(y_true, y_pred, average='macro', labels=[i])
+                if not self.disable_printing:
+                    print(f"f1 macro score on test dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
+                f1_macro_score_per_class[self.data.classes[i]] = score_per_class
+
+        cm = confusion_matrix(y_true, y_pred, normalize='true')
+
+        if self.plot_cm:
+            fig, ax = plt.subplots(figsize=(7, 7))
+            if 'masked' in self.data.classes:
+                real_classes = self.data.classes[:-1]
+            else:
+                real_classes = self.data.classes
+            sns.heatmap(cm, xticklabels=real_classes, yticklabels=real_classes, annot=True, fmt='.2f', cmap=sns.color_palette("ch:s=.25,rot=-.25", as_cmap=True), ax=ax)
+            ax.set_title(f'Confusion matrix for {self.data.dataset_name}', loc='center')
+            for i, tick_label in enumerate(ax.axes.get_yticklabels()):
+                # tick_label.set_color("#008668")
+                tick_label.set_fontsize("10")
+            for i, tick_label in enumerate(ax.axes.get_xticklabels()):
+                # tick_label.set_color("#008668")
+                tick_label.set_fontsize("10")
+            plt.tight_layout()
+            plt.savefig(self.log_dir + '/cm_on_test_data.png')
+            # plt.clf()
+            # fig, ax = plt.subplots(1, 1)
+            # sns.heatmap(cm, annot=True, fmt=".2f", ax=ax)
+            # plt.show()
+
+        if self.device != 'cpu':
+            memory_allocated = torch.cuda.memory_allocated(self.device) / (1024 ** 2)
+            memory_reserved = torch.cuda.memory_reserved(self.device) / (1024 ** 2)
+        else:
+            memory_allocated = None
+            memory_reserved = None
+
+        if self.remove_saved_model_after_testing:
+            os.remove(self.log_dir + '/model_best.bin')
+            
+        if not self.save_model_in_ram:
+            self.model = None
+            gc.collect() # Python thing
+            torch.cuda.empty_cache() # PyTorch thing
+        else:
+            self.model = self.model.eval().cpu()
+
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing), 'memory_allocated_MB': memory_allocated, 'memory_reserved_MB': memory_reserved}
+        
+
+    def run(self):
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed(self.seed)
+        torch.cuda.manual_seed_all(self.seed)  # if you are using multi-GPU.
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+        torch.manual_seed(self.seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        
+        if not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir)
+        self.model = self.model_cls(self.tg_init_graph).to(self.device) # just initialize the parameters of the model
+
+        # for n, p in self.model.named_parameters():
+        #     print(n, p.dtype)
+
+        criterion = self.loss_fn(weight=self.weight)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
+        # scaler = GradScaler()
+        print(f'Training for data: {self.data.dataset_name}')
+        self.max_f1_score_macro = 0
+        self.patience_counter = 0
+
+        if self.loss_fn == torch.nn.CrossEntropyLoss:
+
+
+            train_dataset = TorchGeometricGraphDataset(data=self.data,
+                                                        init_graph=self.init_graph,
+                                                        tg_init_graph=self.tg_init_graph,
+                                                        feature_type=self.feature_type,
+                                                        phase='train', 
+                                                        train_node_list=self.data.train_nodes, 
+                                                        mask_node_list=self.data.mask_nodes)
+            train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True, collate_fn=collate_fn)
+
+
+            if self.feature_type == 'one_hot':
+                for i in tqdm(range(self.num_epochs), desc='Training epochs', disable=self.disable_printing):
+                    if self.patience_counter == self.patience:
+                        break
+                    self.evaluation()
+
+                    self.model.train()
+
+                    # selector = np.array([i for i in range(len(self.data.array_of_graphs_for_training))])
+                    # np.random.shuffle(selector)
+
+                    mean_epoch_loss = []
+
+                    pbar = tqdm(range(len(train_dataset)), desc='Training samples', disable=self.disable_printing)
+                    pbar.set_postfix({'val_best_score': self.max_f1_score_macro})
+
+                    for train_batch in train_loader:
+                        train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+
+                        for sample in train_batch:
+                            # print('SSSSSSSSSSSSSSSSSSSSSS')
+                            optimizer.zero_grad()
+                            out = self.model(sample)
+                            assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
+                            preds_for_loss = out[sample.mask]
+                            tgts_for_loss = sample.y[sample.mask]
+                            # print('AAAAAAAAAAAAAAAA', preds_for_loss.dtype, tgts_for_loss.dtype)
+                            # with autocast(device_type='cuda', dtype=torch.float32):
+                            loss = criterion(preds_for_loss, tgts_for_loss)
+                            loss.backward()
+                            mean_epoch_loss.append(loss.detach().cpu().numpy())
+                            optimizer.step()
+                            scheduler.step()
+                            pbar.update(1)
+
+
+                    # for j, data_curr in enumerate(pbar):
+                    #     n = selector[j]
+                    #     data_curr = self.data.array_of_graphs_for_training[n].to(self.device)
+                    #     optimizer.zero_grad()
+                    #     out = self.model(data_curr)
+                    #     # print(data_curr.x.shape, out[-1], data_curr.y[-1])
+                    #     loss = criterion(out[-1], data_curr.y[-1])
+                    #     loss.backward()
+                    #     mean_epoch_loss.append(loss.detach().cpu().numpy())
+                    #     optimizer.step()
+                    #     scheduler.step()
+                    #     self.data.array_of_graphs_for_training[n].to('cpu')
+                        
+                    if not self.disable_printing:
+                        print(f'Mean loss: {np.mean(mean_epoch_loss)}')
+
+                    # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training)
+
+                    # if not self.disable_printing:
+                    #     print('Training report')
+                    #     print(classification_report(y_true, y_pred))
+                    
+            elif self.feature_type == 'graph_based':
+                if self.masking:
+                    for train_batch in train_loader:
+                        train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+                        assert len(train_batch) == 1
+                        data_curr = train_batch[0]
+                    # data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
+                    self.model.train()
+                    for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
+                        if self.patience_counter == self.patience:
+                            break
+                        if i % self.evaluation_steps == 0:
+                            # self.data.array_of_graphs_for_training[0].to('cpu')
+                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
+
+                            # if not self.disable_printing:
+                            #     print('Training report')
+                            #     print(classification_report(y_true, y_pred))
+
+                            self.evaluation(mask=True)
+                            self.model.train()
+                            # self.data.array_of_graphs_for_training[0].to(self.device)
+
+                        optimizer.zero_grad()
+                        out = self.model(data_curr)
+                        # print(self.model.fc1.weight)
+                        # assert False
+                        # print(data_curr.x[data_curr.mask].detach().cpu().numpy().sum())
+                        # print(out[data_curr.mask].shape, len(self.data.train_nodes))
+                        # assert False
+                        loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
+                        loss.backward()
+                        optimizer.step()
+                        scheduler.step()
+                else:
+                    raise 'Not veryfied yet!'
+                    for train_batch in train_loader:
+                        train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+                        assert len(train_batch) == 1
+                        data_curr = train_batch[0]
+                    # data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
+                    self.model.train()
+                    for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
+                        if self.patience_counter == self.patience:
+                            break
+                        if i % self.evaluation_steps == 0:
+                            # self.data.array_of_graphs_for_training[0].to('cpu')
+                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
+
+                            # if not self.disable_printing:
+                            #     print('Training report')
+                            #     print(classification_report(y_true, y_pred))
+
+                            self.evaluation()
+                            self.model.train()
+                            # self.data.array_of_graphs_for_training[0].to(self.device)
 
                         optimizer.zero_grad()
                         out = self.model(data_curr.to(self.device))
