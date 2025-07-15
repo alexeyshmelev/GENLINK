@@ -19,14 +19,14 @@ from sklearn import metrics
 from multiprocessing import Pool
 from ipywidgets import interact, FloatSlider
 from collections import OrderedDict, Counter
-from torch_geometric.utils import to_networkx
+from torch_geometric.utils import to_networkx, sort_edge_index
 import matplotlib.colors as colors
 import numba
 import hashlib
 import pickle
 from numba import njit, prange
 # numba.config.THREADING_LAYER = 'workqueue'
-from torch.amp import autocast, GradScaler
+# from torch.amp import autocast, GradScaler
 import matplotlib.pyplot as plt
 import matplotlib.cm as mcm
 import torch.nn.functional as F
@@ -314,7 +314,22 @@ class DataProcessor:
         return classes
 
     def get_unique_nodes(self, df):
-        return pd.concat([df['node_id1'], df['node_id2']], axis=0).drop_duplicates().to_numpy()
+        nodes1 = df.loc[:, ['node_id1', 'label_id1']].copy()
+        nodes2 = df.loc[:, ['node_id2', 'label_id2']].copy()
+
+        nodes1 = nodes1.rename(columns={'node_id1': 'node', 'label_id1': 'label'})
+        nodes2 = nodes2.rename(columns={'node_id2': 'node', 'label_id2': 'label'})
+
+        all_nodes = pd.concat([nodes1, nodes2], axis=0)
+
+        unique_nodes = all_nodes.drop_duplicates(subset='node', keep='first')
+
+        non_masked = unique_nodes.loc[unique_nodes['label'] != 'masked', 'node']
+        masked = unique_nodes.loc[unique_nodes['label'] == 'masked', 'node']
+
+        non_masked_sorted = non_masked.sort_values(ignore_index=True)
+
+        return pd.concat([non_masked_sorted, masked], ignore_index=True).to_numpy()
 
     def get_node_names_to_int_mapping(self, unique_nodes):
         # d = torch.load(r"C:\HSE\genotek-nationality-analysis\data\mapping_indices.pt")
@@ -2009,6 +2024,7 @@ class DataProcessor:
 class Heuristics:
     def __init__(self, data: DataProcessor, return_predictions_instead_of_metrics=False):
         self.data = data
+        self.nx_graph = self.data.nx_graph
         self.return_predictions_instead_of_metrics = return_predictions_instead_of_metrics
 
     def collect_predictions(self, y_pred, isolated_test_nodes):
@@ -2054,7 +2070,7 @@ class Heuristics:
             else:
                 edges_per_class = {i:0 for i in range(len(self.data.classes))}
             # ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
+            G = self.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             # edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
@@ -2081,7 +2097,7 @@ class Heuristics:
     def max_number_of_edges_per_class_per_population(self):
         y_true, y_preds = [], []
         isolated_test_nodes = []
-        all_node_classes = nx.get_node_attributes(nx.subgraph(self.data.nx_graph, self.data.train_nodes), "class")
+        all_node_classes = nx.get_node_attributes(nx.subgraph(self.nx_graph, self.data.train_nodes), "class")
         if 'masked' in self.data.classes:
             class_balance = {i:0 for i in range(len(self.data.classes) - 1)}
         else:
@@ -2093,7 +2109,7 @@ class Heuristics:
                 edges_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
             else:
                 edges_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = nx.subgraph(self.data.nx_graph, self.data.train_nodes + [test_node])
+            G = nx.subgraph(self.nx_graph, self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
             if len(test_node_neighbors):
@@ -2127,7 +2143,7 @@ class Heuristics:
             else:
                 segments_per_class = {i:0 for i in range(len(self.data.classes))}
             # ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
+            G = self.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             num_segments = nx.get_edge_attributes(G, "ibd_n")
             # edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
@@ -2164,7 +2180,7 @@ class Heuristics:
                 ibd_max_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
             else:
                 ibd_max_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
+            G = self.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
@@ -2204,7 +2220,7 @@ class Heuristics:
                 ibd_sum_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
             else:
                 ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
+            G = self.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
@@ -2236,7 +2252,7 @@ class Heuristics:
     def max_ibd_sum_per_class_per_population(self):
         y_true, y_preds = [], []
         isolated_test_nodes = []
-        all_node_classes = nx.get_node_attributes(nx.subgraph(self.data.nx_graph, self.data.train_nodes), "class")
+        all_node_classes = nx.get_node_attributes(nx.subgraph(self.nx_graph, self.data.train_nodes), "class")
         if 'masked' in self.data.classes:
             class_balance = {i:0 for i in range(len(self.data.classes) - 1)}
         else:
@@ -2248,7 +2264,7 @@ class Heuristics:
                 ibd_sum_per_class = {i:0 for i in range(len(self.data.classes) - 1)}
             else:
                 ibd_sum_per_class = {i:0 for i in range(len(self.data.classes))}
-            G = self.data.nx_graph.subgraph(self.data.train_nodes + [test_node])
+            G = self.nx_graph.subgraph(self.data.train_nodes + [test_node])
             node_classes = nx.get_node_attributes(G, "class")
             edge_ibd_sum = nx.get_edge_attributes(G, "ibd_sum")
             test_node_neighbors = [node for node in G.neighbors(test_node)]
@@ -3124,9 +3140,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
         edges = [(u, v) for u, v in G.edges()]
         edges += [(v, u) for u, v in G.edges()]
         
-        edges_np = np.asarray(edges, dtype=np.int64).T
+        edges_np = np.asarray(edges).T
         assert edges_np.shape[0] == 2
-        edge_index = torch.as_tensor(edges_np, device=device)
+        edge_index = torch.as_tensor(edges_np, device=device).long()
+
+        # print(edge_index)
 
         node_ids = np.asarray(G.nodes(), dtype=np.int64)
         num_nodes = len(node_ids)
@@ -3164,6 +3182,8 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
         node_attrs = {k: build_node_tensor(k, is_bool=(k == "mask"))
                     for k in node_keys}
         edge_attrs = {k: build_edge_tensor(k) for k in edge_keys}
+
+        # edge_index, edge_attrs['ibd_sum'] = sort_edge_index(edge_index, edge_attrs['ibd_sum'])
 
         data_dict = dict(edge_index=edge_index, **node_attrs, **edge_attrs)
         data = Data(**data_dict)
@@ -3208,9 +3228,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                 for sample in batch:
                     # with autocast(device_type='cuda', dtype=torch.float16):
                     assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
-                    p = F.softmax(self.model(sample)[sample.mask].to('cpu').float(), dim=0).numpy()
+                    p = F.softmax(self.model(sample)[sample.mask][0].to('cpu').float(), dim=0).numpy()
+                    # print('AAAAAAAAAAAAAAAAAAAAAAA', p, int(sample.y[sample.mask][0].to('cpu').numpy()))
+                    # assert False
                     y_pred.append(np.argmax(p))
-                    y_true.append(int(sample.y[sample.mask].to('cpu').numpy()))
+                    y_true.append(int(sample.y[sample.mask][0].to('cpu').numpy()))
                     # sample.to('cpu')
                     # graphs[i].to('cpu')
 
@@ -3225,10 +3247,10 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                         if phase=='training':
                             raise 'Not implemented yet!'
                         elif phase=='scoring':
-                            p = F.softmax(self.model(sample)[sample.mask],
+                            p = F.softmax(self.model(sample)[sample.mask][0],
                                         dim=0).to('cpu').detach().numpy()
                             y_pred.append(np.argmax(p))
-                            y_true.append(sample.y[sample.mask].to('cpu').detach())
+                            y_true.append(sample.y[sample.mask][0].to('cpu').detach())
                         else:
                             raise Exception('No such phase!')
                         # graphs[i].to('cpu')
@@ -3242,10 +3264,10 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                         if phase=='training':
                             raise 'Not implemented yet!'
                         elif phase=='scoring':
-                            p = F.softmax(self.model(sample)[sample.mask],
+                            p = F.softmax(self.model(sample)[sample.mask][0],
                                         dim=0).to('cpu').detach().numpy()
                             y_pred.append(np.argmax(p))
-                            y_true.append(sample.y[sample.mask].to('cpu').detach().numpy().item())
+                            y_true.append(sample.y[sample.mask][0].to('cpu').detach().numpy().item())
                         else:
                             raise Exception('No such phase!')
                         # graphs[i].to('cpu')
@@ -3439,8 +3461,8 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                             optimizer.zero_grad()
                             out = self.model(sample)
                             assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
-                            preds_for_loss = out[sample.mask]
-                            tgts_for_loss = sample.y[sample.mask]
+                            preds_for_loss = out[sample.mask][0]
+                            tgts_for_loss = sample.y[sample.mask][0]
                             # print('AAAAAAAAAAAAAAAA', preds_for_loss.dtype, tgts_for_loss.dtype)
                             # with autocast(device_type='cuda', dtype=torch.float32):
                             loss = criterion(preds_for_loss, tgts_for_loss)
