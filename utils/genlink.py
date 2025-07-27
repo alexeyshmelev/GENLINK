@@ -248,6 +248,7 @@ class DataProcessor:
         self.array_of_graphs_for_training = []
         self.array_of_graphs_for_validation = []
         self.array_of_graphs_for_testing = []
+        self.test_node_type_dict = dict()
         self.dict_node_classes = None
         self.df_for_training = None
         self.df_for_validation = None
@@ -490,6 +491,37 @@ class DataProcessor:
         # print(hash(tuple(self.train_nodes))) # -5406475887983463698
         # assert hash(tuple(self.train_nodes)) in [-5406475887983463698, -7655646181760694371, -8319941732382453427]
         # assert False
+
+        if len(self.mask_nodes) != 0:
+
+            test_node_type = ['only_mask_connect', 'only_not_mask_connect', 'mixed_connect']
+
+            masked_set = set(self.mask_nodes)
+            train_set  = set(self.train_nodes)
+
+            self.test_node_type_dict = {}
+
+            G = self.nx_graph
+
+            for tn in self.test_nodes:
+                keep_nodes = train_set | masked_set | {tn}
+                subG = G.subgraph(keep_nodes)
+
+                neigh = set(subG.neighbors(tn))
+
+                if not neigh:
+                    self.test_node_type_dict[tn] = 'skipped'
+                    continue
+
+                masked_inter = neigh & masked_set
+
+                if masked_inter == neigh:
+                    self.test_node_type_dict[tn] = test_node_type[0]
+                elif not masked_inter:
+                    self.test_node_type_dict[tn] = test_node_type[1]
+                else:
+                    self.test_node_type_dict[tn] = test_node_type[2]
+
 
         if save_dir is not None:
             with open(save_dir + '/train.pickle', 'wb') as handle:
@@ -1451,9 +1483,24 @@ class DataProcessor:
             graph.correct_and_smooth_mask = correct_and_smooth_mask
         graph.num_classes = len(self.classes) - 1 if (masking and not no_mask_class_in_df) else len(self.classes)
 
+        if specific_node in self.test_node_type_dict.keys():
+            # print('AAAAAAAAAAAAAAAAAAAAA', self.test_node_type_dict[specific_node])
+            # print(np.unique(list(self.test_node_type_dict.values())))
+            assert self.test_node_type_dict[specific_node] != 'skipped'
+            graph.test_node_type = self.test_node_type_dict[specific_node]
+
         return graph
 
-    def make_train_valid_test_datasets_with_numba(self, feature_type, model_type, train_dataset_type, test_dataset_type, log_edge_weights=False, skip_train_val=False, masking=False, no_mask_class_in_df=True, make_ram_efficient_dataset=False):
+    def make_train_valid_test_datasets_with_numba(self, 
+                                                  feature_type, 
+                                                  model_type, 
+                                                  train_dataset_type, 
+                                                  test_dataset_type, 
+                                                  log_edge_weights=False, 
+                                                  skip_train_val=False, 
+                                                  masking=False, 
+                                                  no_mask_class_in_df=True, 
+                                                  make_ram_efficient_dataset=False):
 
         if make_ram_efficient_dataset:
             self.array_of_graphs_for_training = FunctionList([])
@@ -1595,6 +1642,129 @@ class DataProcessor:
                         else:
 
                             graph = self.generate_graph(current_train_nodes, -1, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(current_train_nodes)
+
+                            self.array_of_graphs_for_training.append(graph)
+
+                # make validation samples
+                if not skip_train_val:
+                    # print('VALID NODES', sum(self.valid_nodes), len(self.valid_nodes))
+                    if masking:
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
+                                                                                           np.array(self.train_nodes + self.mask_nodes),
+                                                                                           np.array(self.valid_nodes))
+                    else:
+                        rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
+                                                                                           np.array(self.train_nodes),
+                                                                                           np.array(self.valid_nodes))
+                    for k in tqdm(range(len(self.valid_nodes)), desc='Make valid samples', disable=self.disable_printing):
+                        rows_for_adding = rows_for_adding_per_node[k]
+                        df_for_validation = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+
+                        if df_for_validation.shape[0] == self.df_for_training.shape[0]:
+                            if not self.disable_printing:
+                                print('Isolated val node found! Restart with different seed or this node will be ignored.')
+                            continue
+
+                        specific_node = self.valid_nodes[k]
+                        if masking:
+                            current_valid_nodes = self.train_nodes + self.mask_nodes + [specific_node] # important to place specific_node in the end
+                        else:
+                            current_valid_nodes = self.train_nodes + [specific_node] # important to place specific_node in the end
+
+                        if make_ram_efficient_dataset:
+
+                            self.array_of_graphs_for_validation.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(current_valid_nodes, specific_node, self.dict_node_classes, df_for_validation, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+                            assert graph.x.shape[0] == len(current_valid_nodes)
+                            assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
+                            assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+
+                            self.array_of_graphs_for_validation.append(graph)
+
+                # make testing samples
+                if masking:
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
+                                                                                       np.array(self.train_nodes + self.mask_nodes),
+                                                                                       np.array(self.test_nodes))
+                else:
+                    rows_for_adding_per_node = self.find_connections_to_nodes(self.df.to_numpy(dtype=np.float64),
+                                                                                       np.array(self.train_nodes),
+                                                                                       np.array(self.test_nodes))
+                for k in tqdm(range(len(self.test_nodes)), desc='Make test samples', disable=self.disable_printing):
+                    rows_for_adding = rows_for_adding_per_node[k]
+                    df_for_testing = pd.concat([self.df_for_training, self.df.iloc[rows_for_adding]], axis=0)
+
+                    if df_for_testing.shape[0] == self.df_for_training.shape[0]:
+                        if not self.disable_printing:
+                            print('Isolated test node found! Restart with different seed or this node will be ignored.')
+                        continue
+
+                    specific_node = self.test_nodes[k]
+                    if masking:
+                        current_test_nodes = self.train_nodes + self.mask_nodes + [specific_node] # important to place specific_node in the end
+                    else:
+                        current_test_nodes = self.train_nodes + [specific_node] # important to place specific_node in the end
+
+                    if make_ram_efficient_dataset:
+
+                        self.array_of_graphs_for_testing.append((self.generate_graph, int(specific_node), specific_node, self.get_dict_node_classes, rows_for_adding, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+                    
+                    else:
+
+                        graph = self.generate_graph(current_test_nodes, specific_node, self.dict_node_classes, df_for_testing, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                        
+                        assert graph.x.shape[0] == len(current_test_nodes)
+                        if not skip_train_val:
+                            assert torch.all(self.array_of_graphs_for_training[0].x == graph.x[:-1, :])
+                            assert torch.all(self.array_of_graphs_for_training[0].y == graph.y[:-1])
+
+                        self.array_of_graphs_for_testing.append(graph)
+
+            elif train_dataset_type == 'multiple' and test_dataset_type == 'multiple':
+                self.dict_node_classes = self.node_classes_to_dict(return_hashmap=True)
+                self.df_for_training = self.df.copy()
+                if masking:
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes + self.mask_nodes))
+                else:
+                    drop_rows = self.drop_rows_for_training_dataset(self.df.to_numpy(dtype=np.float64), numba.typed.List(self.train_nodes))
+                self.df_for_training = self.df_for_training.drop(drop_rows)
+
+                # make training samples
+                if not skip_train_val:
+                    for k in tqdm(range(len(self.train_nodes)), desc='Make train samples', disable=self.disable_printing):
+
+                        if masking:
+                            curr_train_nodes, specific_node = self.place_specific_node_to_the_end(self.train_nodes + self.mask_nodes, k)
+                        else:
+                            curr_train_nodes, specific_node = self.place_specific_node_to_the_end(self.train_nodes, k)
+
+                        if make_ram_efficient_dataset:
+
+                            self.array_of_graphs_for_training.append((self.generate_graph, (self.place_specific_node_to_the_end, k), specific_node, self.get_dict_node_classes, self.get_df_for_training, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        else:
+
+                            graph = self.generate_graph(curr_train_nodes, specific_node, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
+                            
+
+                        # if masking:
+                        #     current_train_nodes = self.train_nodes + self.mask_nodes
+                        # else:
+                        #     current_train_nodes = self.train_nodes
+
+                        # if make_ram_efficient_dataset:
+
+                        #     self.array_of_graphs_for_training.append((self.generate_graph, -1, -1, self.get_dict_node_classes, self.get_df_for_training, log_edge_weights, feature_type, masking, no_mask_class_in_df))
+
+                        # else:
+
+                        #     graph = self.generate_graph(current_train_nodes, -1, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
                             
                             assert graph.x.shape[0] == len(current_train_nodes)
 
@@ -2670,6 +2840,34 @@ class Trainer:
         self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
         self.model.eval()
         y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_testing, mask=mask, phase='scoring')
+
+        f1_macro_score_only_mask_connect = -100
+        f1_macro_score_only_not_mask_connect = -100
+        f1_macro_score_mixed_connect = -100
+        if len(self.data.test_node_type_dict) != 0:
+            test_node_types = []
+            for node in self.data.test_nodes:
+                test_node_types.append(self.data.test_node_type_dict[node])
+            test_node_types = [x for x in test_node_types if x != 'skipped']
+            assert len(test_node_types) == len(self.data.array_of_graphs_for_testing)
+            test_node_types = np.array(test_node_types)
+
+            only_mask_connect_m = test_node_types == 'only_mask_connect'
+            only_mask_connect_sum = np.sum(only_mask_connect_m)
+
+            only_not_mask_connect_m = test_node_types == 'only_not_mask_connect'
+            only_not_mask_connect_sum = np.sum(only_not_mask_connect_m)
+
+            mixed_connect_m = test_node_types == 'mixed_connect'
+            mixed_connect_sum = np.sum(mixed_connect_m)
+
+            if len(only_mask_connect_m) != 0:
+                f1_macro_score_only_mask_connect = f1_score(np.array(y_true)[only_mask_connect_m], np.array(y_pred)[only_mask_connect_m], average='macro')
+            if len(only_mask_connect_m) != 0:
+                f1_macro_score_only_not_mask_connect = f1_score(np.array(y_true)[only_not_mask_connect_m], np.array(y_pred)[only_not_mask_connect_m], average='macro')
+            if len(only_mask_connect_m) != 0:
+                f1_macro_score_mixed_connect = f1_score(np.array(y_true)[mixed_connect_m], np.array(y_pred)[mixed_connect_m], average='macro')
+
         if not self.disable_printing:
             print('Test report')
             print(classification_report(y_true, y_pred))
@@ -2751,7 +2949,23 @@ class Trainer:
         else:
             self.model = self.model.eval().cpu()
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing), 'memory_allocated_MB': memory_allocated, 'memory_reserved_MB': memory_reserved}
+        return {'f1_macro': f1_macro_score, 
+                'f1_weighted': f1_weighted_score, 
+                'precision_macro': precision_macro_score, 
+                'precision_weighted': precision_weighted_score, 
+                'recall_macro': recall_macro_score, 
+                'recall_weighted': recall_weighted_score, 
+                'accuracy':acc, 
+                'class_scores': f1_macro_score_per_class, 
+                'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing), 
+                'memory_allocated_MB': memory_allocated, 
+                'memory_reserved_MB': memory_reserved,
+                'f1_macro_score_only_mask_connect': float(f1_macro_score_only_mask_connect),
+                'f1_macro_score_only_not_mask_connect': float(f1_macro_score_only_not_mask_connect),
+                'f1_macro_score_mixed_connect': float(f1_macro_score_mixed_connect),
+                'only_mask_connect_sum': float(only_mask_connect_sum),
+                'only_not_mask_connect_sum': float(only_not_mask_connect_sum),
+                'mixed_connect_sum': float(mixed_connect_sum)} 
         
 
     def run(self):
@@ -3396,7 +3610,7 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
         else:
             self.model = self.model.eval().cpu()
 
-        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(self.data.array_of_graphs_for_testing), 'memory_allocated_MB': memory_allocated, 'memory_reserved_MB': memory_reserved}
+        return {'f1_macro': f1_macro_score, 'f1_weighted': f1_weighted_score, 'precision_macro': precision_macro_score, 'precision_weighted': precision_weighted_score, 'recall_macro': recall_macro_score, 'recall_weighted': recall_weighted_score, 'accuracy':acc, 'class_scores': f1_macro_score_per_class, 'skipped_nodes': len(self.data.test_nodes) - len(y_true), 'memory_allocated_MB': memory_allocated, 'memory_reserved_MB': memory_reserved}
         
 
     def run(self):

@@ -224,9 +224,9 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         #     plt.title(f'Model performance for {dataset_dir}', fontsize=title_size)
         # else:
         #     plt.title(f'Model performance for {dataset_dir} (class {class_plot_only})', fontsize=title_size)
-        plt.xlabel('model', fontsize=xlabel_size)
-        plt.ylabel('f1-macro score', fontsize=ylabel_size)
-        plt.xticks(rotation=45, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=8)  # Rotate x-axis labels for better readability
+        plt.xlabel('model', fontsize=xlabel_size, fontweight='bold')
+        plt.ylabel('f1-macro score', fontsize=ylabel_size, fontweight='bold')
+        plt.xticks(rotation=90, ha='right', rotation_mode='anchor', verticalalignment='center', fontsize=20)  # Rotate x-axis labels for better readability
         ax = plt.gca()
         # for i in range(len(ax.get_xticklabels())):
         #     if ax.get_xticklabels()[i].get_text() in ['MaxEdgeCount', 'MaxEdgeCountPerClassSize', 'MaxIbdSum', 'MaxIbdSumPerClassSize', 'LongestIbd', 'MaxSegmentCount']:
@@ -234,8 +234,9 @@ def visualize_classifier_data(data_path, fig_path=None, mask_percent=None, sort_
         #     else:
         #         plt.setp(ax.get_xticklabels()[i], color='red', weight='bold')
 
+        ax.tick_params(axis='y', labelsize=20)
 
-        plt.legend()
+        plt.legend(fontsize=15)
         plt.tight_layout()  # Adjust the layout to make room for the rotated labels
         if fig_path is not None:
             if class_plot_only is None:

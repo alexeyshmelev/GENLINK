@@ -28,5 +28,6 @@
     "save_dataset_stats":true,
     "no_mask_class_in_df":true,
     "make_ram_efficient_dataset":false,
-    "num_workers": 8
+    "num_workers": 8,
+    "use_torch_geometric_trainer": false
 }
