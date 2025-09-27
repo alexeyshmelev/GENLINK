@@ -492,7 +492,7 @@ class DataProcessor:
         # assert hash(tuple(self.train_nodes)) in [-5406475887983463698, -7655646181760694371, -8319941732382453427]
         # assert False
 
-        if len(self.mask_nodes) != 0:
+        if self.mask_nodes is not None:
 
             test_node_type = ['only_mask_connect', 'only_not_mask_connect', 'mixed_connect']
 
@@ -1135,7 +1135,7 @@ class DataProcessor:
             return np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
         else:
             hashmap = np.zeros(self.node_classes_sorted.shape[0]).astype(bool)
-            all_nodes = self.node_classes_sorted['node'].to_numpy()
+            # all_nodes = self.node_classes_sorted['node'].to_numpy()
             for node in self.mask_nodes:
                 hashmap[node] = True
         
@@ -2836,14 +2836,18 @@ class Trainer:
                 print(f'Metric was not improved for the {self.patience_counter}th time')
 
     def test(self, mask=False):
-        self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device)
-        self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
-        self.model.eval()
+        if self.model.__class__.__name__ != 'GL_LR':
+            self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device)
+            self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
+            self.model.eval()
         y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_testing, mask=mask, phase='scoring')
 
         f1_macro_score_only_mask_connect = -100
         f1_macro_score_only_not_mask_connect = -100
         f1_macro_score_mixed_connect = -100
+        only_mask_connect_sum = -100
+        only_not_mask_connect_sum = -100
+        mixed_connect_sum = -100
         if len(self.data.test_node_type_dict) != 0:
             test_node_types = []
             for node in self.data.test_nodes:
@@ -2940,7 +2944,8 @@ class Trainer:
             memory_reserved = None
 
         if self.remove_saved_model_after_testing:
-            os.remove(self.log_dir + '/model_best.bin')
+            if self.model.__class__.__name__ != 'GL_LR':
+                os.remove(self.log_dir + '/model_best.bin')
             
         if not self.save_model_in_ram:
             self.model = None
@@ -2981,9 +2986,11 @@ class Trainer:
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
         self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device) # just initialize the parameters of the model
-        criterion = self.loss_fn(weight=self.weight)
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
+        if self.model.__class__.__name__ != 'GL_LR':
+            print(self.model.__class__.__name__)
+            criterion = self.loss_fn(weight=self.weight)
+            optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+            scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
         print(f'Training for data: {self.data.dataset_name}')
         self.max_f1_score_macro = 0
         self.patience_counter = 0
@@ -3077,28 +3084,32 @@ class Trainer:
                         scheduler.step()
                 else:
                     data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
-                    self.model.train()
-                    for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
-                        if self.patience_counter == self.patience:
-                            break
-                        if i % self.evaluation_steps == 0:
-                            self.data.array_of_graphs_for_training[0].to('cpu')
-                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
+                    if self.model.__class__.__name__ == 'GL_LR':
+                        # print(self.model.__class__.__name__)
+                        self.model.fit(data_curr)
+                    else:
+                        self.model.train()
+                        for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
+                            if self.patience_counter == self.patience:
+                                break
+                            if i % self.evaluation_steps == 0:
+                                self.data.array_of_graphs_for_training[0].to('cpu')
+                                # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, phase='training')
 
-                            # if not self.disable_printing:
-                            #     print('Training report')
-                            #     print(classification_report(y_true, y_pred))
+                                # if not self.disable_printing:
+                                #     print('Training report')
+                                #     print(classification_report(y_true, y_pred))
 
-                            self.evaluation()
-                            self.model.train()
-                            self.data.array_of_graphs_for_training[0].to(self.device)
+                                self.evaluation()
+                                self.model.train()
+                                self.data.array_of_graphs_for_training[0].to(self.device)
 
-                        optimizer.zero_grad()
-                        out = self.model(data_curr.to(self.device))
-                        loss = criterion(out, data_curr.y)
-                        loss.backward()
-                        optimizer.step()
-                        scheduler.step()
+                            optimizer.zero_grad()
+                            out = self.model(data_curr.to(self.device))
+                            loss = criterion(out, data_curr.y)
+                            loss.backward()
+                            optimizer.step()
+                            scheduler.step()
 
             else:
                 raise Exception('Trainer is not implemented for such feature type name!')

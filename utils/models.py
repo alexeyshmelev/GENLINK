@@ -2,9 +2,42 @@ import torch
 import torch.nn as nn
 from collections import OrderedDict
 import torch.nn.functional as F
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
 from torch.nn import Linear, LayerNorm, BatchNorm1d, Sequential, LeakyReLU, Dropout
 from torch_geometric.nn import GCNConv, GATConv, TransformerConv, NNConv, SGConv, ARMAConv, TAGConv, ChebConv, DNAConv, LabelPropagation, \
 EdgeConv, FiLMConv, FastRGCNConv, SSGConv, SAGEConv, GATv2Conv, BatchNorm, GraphNorm, MemPooling, SAGPooling, GINConv, CorrectAndSmooth
+
+class GL_LR:
+    def __init__(self, data, solver='lbfgs', max_iter=500):
+        self.num_features = data.num_features
+        self.num_classes = int(data.num_classes)
+
+        # sklearn pipeline: scale -> logistic regression
+        self.model = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(
+                multi_class='multinomial',
+                solver=solver,
+                max_iter=max_iter
+            )
+        )
+
+    def fit(self, data):
+        # Convert torch tensors -> numpy (CPU) for sklearn
+        X = data.x.detach().cpu().numpy()
+        y = data.y.detach().cpu().numpy()
+        self.model.fit(X, y)   
+
+    def to(self, device):
+        print("Logistic Regression will run only on CPU (graph-based features).")
+        return self
+
+    def __call__(self, data):
+        X = data.x.detach().cpu().numpy()
+        logits = self.model.decision_function(X)
+        return torch.tensor(logits, dtype=torch.float32)
 
 class GL_TAGConv_3l_128h_w_k3(torch.nn.Module):
     def __init__(self, data):

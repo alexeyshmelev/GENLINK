@@ -50,6 +50,7 @@ class Runner:
             assert len(curr_exp) == 4
 
             feature_type = curr_exp[0]
+            initial_feature_type = copy.deepcopy(feature_type)
             model = curr_exp[1]
             dataset_name = curr_exp[2]
             split_id = curr_exp[3]
@@ -83,14 +84,25 @@ class Runner:
                                                                     log_edge_weights=self.running_params['log_ibd'],
                                                                     make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
                 elif feature_type=='graph_based':
-                    dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
+                    if self.running_params['treat_graph_based_features_like_one_hot']:
+                        dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
                                                                     model_type='homogeneous', 
-                                                                    train_dataset_type='one', 
+                                                                    train_dataset_type='multiple', 
                                                                     test_dataset_type='multiple',
                                                                     masking=self.running_params['masking'],
                                                                     no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
                                                                     log_edge_weights=self.running_params['log_ibd'],
                                                                     make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
+                        feature_type = 'one_hot'
+                    else:
+                        dataset.make_train_valid_test_datasets_with_numba(feature_type=feature_type, 
+                                                                        model_type='homogeneous', 
+                                                                        train_dataset_type='one', 
+                                                                        test_dataset_type='multiple',
+                                                                        masking=self.running_params['masking'],
+                                                                        no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
+                                                                        log_edge_weights=self.running_params['log_ibd'],
+                                                                        make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
             # select parameters for grid search
             curr_params = dict()
             curr_params['lr'] = self.running_params['lr']
@@ -109,7 +121,12 @@ class Runner:
             print(f'Here will be {len(curr_params_grid)} runs for model {model}')
 
             for curr_param in curr_params_grid:
-                log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type + '_' + f'split_{split_id}'
+                if self.running_params['treat_graph_based_features_like_one_hot']:
+                    feature_type_name = 'graph_based+'
+                    assert initial_feature_type == 'graph_based' and feature_type == 'one_hot'
+                else:
+                    feature_type_name = feature_type
+                log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type_name + '_' + f'split_{split_id}'
                 trainer_class = Trainer if not self.running_params['use_torch_geometric_trainer'] else TorchGeometricTrainer
                 trainer = trainer_class(data=dataset,
                                 model_cls=getattr(models, model), 
