@@ -103,6 +103,11 @@ class Runner:
                                                                         no_mask_class_in_df=self.running_params['no_mask_class_in_df'],
                                                                         log_edge_weights=self.running_params['log_ibd'],
                                                                         make_ram_efficient_dataset=self.running_params['make_ram_efficient_dataset'])
+                        
+            else:
+                if feature_type=='graph_based':
+                    if self.running_params['treat_graph_based_features_like_one_hot']:
+                        feature_type = 'one_hot'
             # select parameters for grid search
             curr_params = dict()
             curr_params['lr'] = self.running_params['lr']
@@ -121,13 +126,17 @@ class Runner:
             print(f'Here will be {len(curr_params_grid)} runs for model {model}')
 
             for curr_param in curr_params_grid:
-                if self.running_params['treat_graph_based_features_like_one_hot']:
+                if self.running_params['treat_graph_based_features_like_one_hot'] and initial_feature_type == 'graph_based':
                     feature_type_name = 'graph_based+'
                     assert initial_feature_type == 'graph_based' and feature_type == 'one_hot'
                 else:
                     feature_type_name = feature_type
                 log_dir = self.running_params['log_dir'] + '/' + dataset_name + ('_log' if self.running_params['log_ibd'] else '') + '/' + model + '_' + feature_type_name + '_' + f'split_{split_id}'
                 trainer_class = Trainer if not self.running_params['use_torch_geometric_trainer'] else TorchGeometricTrainer
+                if self.running_params['use_torch_geometric_trainer'] and self.running_params['treat_graph_based_features_like_one_hot'] and initial_feature_type == 'graph_based':
+                    trainer_kwargs = {'treat_graph_based_features_like_one_hot': True}
+                else:
+                    trainer_kwargs = dict()
                 trainer = trainer_class(data=dataset,
                                 model_cls=getattr(models, model), 
                                 lr=curr_param['lr'], 
@@ -151,7 +160,7 @@ class Runner:
                                 remove_saved_model_after_testing=True,
                                 plot_cm=self.running_params['plot_cm'],
                                 use_class_balance_weight=self.running_params['use_class_balance_weight'],
-                                num_workers=self.running_params['num_workers'])
+                                num_workers=self.running_params['num_workers'], **trainer_kwargs)
                 results = trainer.run()
 
                 if results['f1_macro'] >= max_f1_macro_score:

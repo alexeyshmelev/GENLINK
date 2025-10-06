@@ -27,7 +27,8 @@
     "use_class_balance_weight":true,
     "save_dataset_stats":false,
     "no_mask_class_in_df":false,
-    "make_ram_efficient_dataset":true,
+    "make_ram_efficient_dataset":false,
     "num_workers": 8,
-    "use_torch_geometric_trainer": true
+    "use_torch_geometric_trainer": false,
+    "treat_graph_based_features_like_one_hot": true
 }

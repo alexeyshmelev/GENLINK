@@ -63,6 +63,14 @@ from torch.nn import Linear, LayerNorm, BatchNorm1d, Sequential, LeakyReLU, Drop
 from torch_geometric.nn import GCNConv, GATConv, TransformerConv, NNConv, SGConv, ARMAConv, TAGConv, ChebConv, DNAConv, LabelPropagation, \
 EdgeConv, FiLMConv, FastRGCNConv, SSGConv, SAGEConv, GATv2Conv, BatchNorm, GraphNorm, MemPooling, SAGPooling, GINConv, CorrectAndSmooth
 
+
+def sha256_of_object(obj) -> str:
+    # Serialize to bytes
+    data = pickle.dumps(obj)
+    # Hash it
+    return hashlib.sha256(data).hexdigest()
+
+
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -1737,7 +1745,10 @@ class DataProcessor:
 
                 # make training samples
                 if not skip_train_val:
+                    # assert 328 in self.train_nodes
                     for k in tqdm(range(len(self.train_nodes)), desc='Make train samples', disable=self.disable_printing):
+
+                        # if self.train_nodes[k] == 328:
 
                         if masking:
                             curr_train_nodes, specific_node = self.place_specific_node_to_the_end(self.train_nodes + self.mask_nodes, k)
@@ -1766,7 +1777,11 @@ class DataProcessor:
 
                         #     graph = self.generate_graph(current_train_nodes, -1, self.dict_node_classes, self.df_for_training, log_edge_weights, feature_type, masking=masking, no_mask_class_in_df=no_mask_class_in_df)
                             
-                            assert graph.x.shape[0] == len(current_train_nodes)
+                            assert graph.x.shape[0] == len(curr_train_nodes)
+
+                            # if self.train_nodes[k] == 328:
+                            #     print('FINAL SUM', torch.sum(graph.x), 'NODE', self.train_nodes[k], 'IDX', k, 'DTYPE', graph.x.dtype)
+                            #     assert 0
 
                             self.array_of_graphs_for_training.append(graph)
 
@@ -3119,9 +3134,10 @@ class Trainer:
 
 
 class TorchGeometricGraphDataset(Dataset):
-    def __init__(self, data, init_graph, tg_init_graph, feature_type, phase, train_node_list, mask_node_list, val_node_list=None, test_node_list=None):
+    def __init__(self, data, init_graph, tg_init_graph, feature_type, phase, train_node_list, mask_node_list, treat_graph_based_features_like_one_hot = False, val_node_list=None, test_node_list=None):
         self.init_graph = init_graph
         self.tg_init_graph = tg_init_graph
+        self.treat_graph_based_features_like_one_hot = treat_graph_based_features_like_one_hot
 
         self.mask_class_idx = data.classes.index('masked')
 
@@ -3157,18 +3173,20 @@ class TorchGeometricGraphDataset(Dataset):
             raise 'No such phase!'
 
     def __len__(self):
-        if self.feature_type == 'one_hot':
+        if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot:
             return len(self.idx_to_node_mapping)
-        elif self.feature_type == 'graph_based':
-            if self.phase == 'train':
+        elif self.feature_type == 'graph_based' or (self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot):
+            if self.phase == 'train' and self.feature_type == 'graph_based':
                 return 1
+            elif self.phase == 'train' and self.feature_type == 'one_hot':
+                return len(self.idx_to_node_mapping)
             else:
                 return len(self.idx_to_node_mapping)
         else:
             raise 'No such feature type!'
 
     def __getitem__(self, idx):
-        if self.feature_type == 'one_hot':
+        if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot:
             if self.phase == 'train':
                 node = self.idx_to_node_mapping[idx]
                 curr_tg_init_graph = self.tg_init_graph.clone()
@@ -3195,35 +3213,128 @@ class TorchGeometricGraphDataset(Dataset):
                 subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
                 return subgraph
             
-        elif self.feature_type == 'graph_based':
-            if self.phase == 'train':
-                curr_tg_init_graph = self.tg_init_graph.clone()
-                assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
-                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
-                return subgraph
+        elif self.feature_type == 'graph_based' or (self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot):
+            # print('HASH', sha256_of_object(torch.round(self.tg_init_graph.x)), torch.sum(self.tg_init_graph.x))
+            # print('INITIAL SUM', torch.sum(self.tg_init_graph.x))
+
+            # assert 0
             
-            elif self.phase == 'val' or self.phase == 'test':
-                node = self.idx_to_node_mapping[idx]
-                curr_tg_init_graph = self.tg_init_graph.clone()
-                assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
-                assert np.allclose(curr_tg_init_graph.x[node].numpy(), np.array(self.init_graph.nodes[node]['x']))
-                assert curr_tg_init_graph.y[node] != self.mask_class_idx
-                curr_tg_init_graph.mask[:] = False
-                curr_tg_init_graph.mask[node] = True
-                subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
-                return subgraph
+            if self.feature_type == 'graph_based':
+                if self.phase == 'train':
+                    curr_tg_init_graph = self.tg_init_graph.clone()
+                    assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                    subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
+                    return subgraph
+                
+                elif self.phase == 'val' or self.phase == 'test':
+                    node = self.idx_to_node_mapping[idx]
+                    curr_tg_init_graph = self.tg_init_graph.clone()
+                    assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                    assert np.allclose(curr_tg_init_graph.x[node].numpy(), np.array(self.init_graph.nodes[node]['x']))
+                    assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                    curr_tg_init_graph.mask[:] = False
+                    curr_tg_init_graph.mask[node] = True
+                    subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
+                    return subgraph
+                
+            elif self.feature_type == 'one_hot':
+                if self.phase == 'train':
+                    curr_tg_init_graph = self.tg_init_graph.clone()
+
+                    # Artificially mask exactly one training node (the current sample)
+                    node = self.idx_to_node_mapping[idx]
+                    assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                    curr_tg_init_graph.mask[:] = False
+                    curr_tg_init_graph.mask[node] = True
+
+                    # Recompute graph_based features for ALL neighbors of `node`,
+                    # treating `node` as if it were masked (i.e., excluded from training neighbors)
+                    num_cls_feat = self.mask_class_idx                         # number of non-masked classes
+                    effective_train = set(self.train_node_list)
+                    effective_train.discard(node)                              # exclude the masked node
+
+                    for nb in self.init_graph.neighbors(node):
+                        # Accumulators per class (match Trainer logic)
+                        cnt_edges = [0.0] * num_cls_feat
+                        sum_w     = [0.0] * num_cls_feat
+                        sumsq_w   = [0.0] * num_cls_feat
+                        max_w     = [0.0] * num_cls_feat
+                        sum_seg   = [0.0] * num_cls_feat
+                        cnt_vals  = [0]   * num_cls_feat
+
+                        for u in self.init_graph.neighbors(nb):
+                            if u not in effective_train:
+                                continue
+                            cls_u = int(self.init_graph.nodes[u]['class'])
+                            if cls_u == self.mask_class_idx:
+                                continue  # safety
+
+                            ed = self.init_graph[nb][u]
+                            w  = float(ed['ibd_sum'])
+                            s  = float(ed['ibd_n'])
+
+                            cnt_edges[cls_u] += 1.0
+                            sum_w[cls_u]     += w
+                            sumsq_w[cls_u]   += w * w
+                            max_w[cls_u]      = w if w > max_w[cls_u] else max_w[cls_u]
+                            sum_seg[cls_u]   += s
+                            cnt_vals[cls_u]  += 1
+
+                        # Assemble 5 × C' feature vector: [counts | means | stds | max | segs]
+                        feats = []
+                        feats.extend(cnt_edges)
+
+                        for c in range(num_cls_feat):
+                            feats.append(sum_w[c] / cnt_vals[c] if cnt_vals[c] else 0.0)
+
+                        for c in range(num_cls_feat):
+                            if cnt_vals[c]:
+                                var = (sumsq_w[c] / cnt_vals[c]) - (sum_w[c] / cnt_vals[c])**2
+                                std = float(np.sqrt(var)) if var > 0 else 0.0
+                            else:
+                                std = 0.0
+                            feats.append(std)
+
+                        feats.extend(max_w)
+                        feats.extend(sum_seg)
+
+                        curr_tg_init_graph.x[nb] = torch.tensor(
+                            feats,
+                            dtype=curr_tg_init_graph.x.dtype,
+                            device=curr_tg_init_graph.x.device,
+                        )
+
+                    assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                    subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
+                    # print('FINAL SUM', torch.sum(subgraph.x), 'NODE', self.idx_to_node_mapping[idx], 'IDX', idx, 'DTYPE', subgraph.x.dtype)
+                    # assert 0
+                    return subgraph
+
+                
+                elif self.phase == 'val' or self.phase == 'test':
+                    node = self.idx_to_node_mapping[idx]
+                    curr_tg_init_graph = self.tg_init_graph.clone()
+                    assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
+                    assert np.allclose(curr_tg_init_graph.x[node].numpy(), np.array(self.init_graph.nodes[node]['x']))
+                    assert curr_tg_init_graph.y[node] != self.mask_class_idx
+                    curr_tg_init_graph.mask[:] = False
+                    curr_tg_init_graph.mask[node] = True
+                    subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list + [node]))
+                    return subgraph
 
 
 
 class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with real masks for now with latest updates!!!
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, treat_graph_based_features_like_one_hot=False):
         self.data = data
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
         assert len(self.data.array_of_graphs_for_training) == len(self.data.array_of_graphs_for_validation) == len(self.data.array_of_graphs_for_testing) == 0
+        self.treat_graph_based_features_like_one_hot = treat_graph_based_features_like_one_hot
 
         self.feature_type = feature_type
         self.init_graph = self.data.nx_graph
-        if self.feature_type == 'one_hot': 
+        if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot: 
+            print('Using one_hot features...')
             x = {node:{'x': ([0 if i != cls else 1 for i in range(len(self.data.classes) - 1)] if cls != self.data.classes.index('masked') else [1/(len(self.data.classes) - 1) for i in range(len(self.data.classes) - 1)]) if 'masked' in self.data.classes else [0 if i != cls else 1 for i in range(len(self.data.classes))]} for node, cls in nx.get_node_attributes(self.init_graph,'class').items()}
             nx.set_node_attributes(self.init_graph, x)
 
@@ -3233,7 +3344,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
             # print(self.tg_init_graph)
 
-        elif self.feature_type == 'graph_based':
+        elif self.feature_type == 'graph_based' or (self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot):
+            if self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot:
+                print('Using graph_based+ features...')
+            else:
+                print('Using graph_based features...')
             
             
             masked_idx   = self.data.classes.index('masked')
@@ -3306,7 +3421,7 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
             self.tg_init_graph = self.from_nx_preserve_ids(
                 self.init_graph,
                 device='cpu',
-                float_dtype=torch.float32,
+                float_dtype=torch.float64,
             )
 
         else:
@@ -3441,11 +3556,12 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                                             train_node_list=self.data.train_nodes, 
                                             mask_node_list=self.data.mask_nodes,
                                             val_node_list=self.data.valid_nodes,
-                                            test_node_list=self.data.test_nodes)
+                                            test_node_list=self.data.test_nodes,
+                                            treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot)
         loader = DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False, collate_fn=collate_fn)
         pbar = tqdm(range(len(dataset)), desc='Compute metrics', disable=self.disable_printing)
 
-        if self.feature_type == 'one_hot':
+        if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot:
             # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
             for batch in loader:
                 batch = batch.to(self.device, non_blocking=True).to_data_list()
@@ -3462,24 +3578,27 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                     # graphs[i].to('cpu')
 
                     pbar.update(1)
-        elif self.feature_type == 'graph_based':
+        elif self.feature_type == 'graph_based' or (self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot):
+            if self.feature_type == 'one_hot' and self.treat_graph_based_features_like_one_hot:
+                mask = True
             if not mask:
-                # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
-                for batch in loader:
-                    batch = batch.to(self.device, non_blocking=True).to_data_list()
+                assert False
+                # # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
+                # for batch in loader:
+                #     batch = batch.to(self.device, non_blocking=True).to_data_list()
 
-                    for sample in batch:
-                        if phase=='training':
-                            raise 'Not implemented yet!'
-                        elif phase=='scoring':
-                            p = F.softmax(self.model(sample)[sample.mask][0],
-                                        dim=0).to('cpu').detach().numpy()
-                            y_pred.append(np.argmax(p))
-                            y_true.append(sample.y[sample.mask][0].to('cpu').detach())
-                        else:
-                            raise Exception('No such phase!')
-                        # graphs[i].to('cpu')
-                        pbar.update(1)
+                #     for sample in batch:
+                #         if phase=='training':
+                #             raise 'Not implemented yet!'
+                #         elif phase=='scoring':
+                #             p = F.softmax(self.model(sample)[sample.mask][0],
+                #                         dim=0).to('cpu').detach().numpy()
+                #             y_pred.append(np.argmax(p))
+                #             y_true.append(sample.y[sample.mask][0].to('cpu').detach())
+                #         else:
+                #             raise Exception('No such phase!')
+                #         # graphs[i].to('cpu')
+                #         pbar.update(1)
             else:
                 # for i in tqdm(range(len(graphs)), desc='Compute metrics', disable=self.disable_printing):
                 for batch in loader:
@@ -3658,7 +3777,8 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                                                         feature_type=self.feature_type,
                                                         phase='train', 
                                                         train_node_list=self.data.train_nodes, 
-                                                        mask_node_list=self.data.mask_nodes)
+                                                        mask_node_list=self.data.mask_nodes,
+                                                        treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot)
             train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True, collate_fn=collate_fn)
 
 
@@ -3685,7 +3805,8 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                             # print('SSSSSSSSSSSSSSSSSSSSSS')
                             optimizer.zero_grad()
                             out = self.model(sample)
-                            assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
+                            if not self.treat_graph_based_features_like_one_hot:
+                                assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
                             preds_for_loss = out[sample.mask][0]
                             tgts_for_loss = sample.y[sample.mask][0]
                             # print('AAAAAAAAAAAAAAAA', preds_for_loss.dtype, tgts_for_loss.dtype)
