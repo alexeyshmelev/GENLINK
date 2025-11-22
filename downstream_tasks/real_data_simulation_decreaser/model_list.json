@@ -1,5 +1,5 @@
 {
-    "gnn":{"GL_MLP_3l_512h":["graph_based"]},
+    "gnn":{"GL_LR":["graph_based"]},
     "heuristic":[],
     "community_detection":[]
 }

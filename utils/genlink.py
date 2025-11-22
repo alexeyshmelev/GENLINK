@@ -3070,33 +3070,37 @@ class Trainer:
             elif self.feature_type == 'graph_based':
                 if self.masking:
                     data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
-                    self.model.train()
-                    for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
-                        if self.patience_counter == self.patience:
-                            break
-                        if i % self.evaluation_steps == 0:
-                            self.data.array_of_graphs_for_training[0].to('cpu')
-                            # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
+                    if self.model.__class__.__name__ == 'GL_LR':
+                        # print(self.model.__class__.__name__)
+                        self.model.fit(data_curr)
+                    else:
+                        self.model.train()
+                        for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
+                            if self.patience_counter == self.patience:
+                                break
+                            if i % self.evaluation_steps == 0:
+                                self.data.array_of_graphs_for_training[0].to('cpu')
+                                # y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_training, mask=True, phase='training')
 
-                            # if not self.disable_printing:
-                            #     print('Training report')
-                            #     print(classification_report(y_true, y_pred))
+                                # if not self.disable_printing:
+                                #     print('Training report')
+                                #     print(classification_report(y_true, y_pred))
 
-                            self.evaluation(mask=True)
-                            self.model.train()
-                            self.data.array_of_graphs_for_training[0].to(self.device)
+                                self.evaluation(mask=True)
+                                self.model.train()
+                                self.data.array_of_graphs_for_training[0].to(self.device)
 
-                        optimizer.zero_grad()
-                        out = self.model(data_curr.to(self.device))
-                        # print(self.model.fc1.weight)
-                        # assert False
-                        # print(data_curr.x[data_curr.mask].detach().cpu().numpy().sum())
-                        # print(out[data_curr.mask].shape, len(self.data.train_nodes))
-                        # assert False
-                        loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
-                        loss.backward()
-                        optimizer.step()
-                        scheduler.step()
+                            optimizer.zero_grad()
+                            out = self.model(data_curr.to(self.device))
+                            # print(self.model.fc1.weight)
+                            # assert False
+                            # print(data_curr.x[data_curr.mask].detach().cpu().numpy().sum())
+                            # print(out[data_curr.mask].shape, len(self.data.train_nodes))
+                            # assert False
+                            loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
+                            loss.backward()
+                            optimizer.step()
+                            scheduler.step()
                 else:
                     data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
                     if self.model.__class__.__name__ == 'GL_LR':

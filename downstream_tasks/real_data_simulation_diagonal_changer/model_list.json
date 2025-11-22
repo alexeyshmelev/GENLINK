@@ -1,5 +1,5 @@
 {
-    "gnn":{},
-    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "gnn":{"GL_LR":["graph_based"]},
+    "heuristic":[],
     "community_detection":[]
 }
