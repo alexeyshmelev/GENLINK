@@ -12,7 +12,7 @@
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
     "batch_size":1,
-    "log_dir":"/home/jovyan/shmelev/GENLINK/downstream_tasks/runs/real_data_real_masks",
+    "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_real_masks",
     "patience":[10],
     "num_epochs":[10],
     "train_iterations_per_sample":[1000],
@@ -27,8 +27,8 @@
     "use_class_balance_weight":true,
     "save_dataset_stats":false,
     "no_mask_class_in_df":false,
-    "make_ram_efficient_dataset":false,
+    "make_ram_efficient_dataset":true,
     "num_workers": 8,
-    "use_torch_geometric_trainer": false,
+    "use_torch_geometric_trainer": true,
     "treat_graph_based_features_like_one_hot": true
 }
