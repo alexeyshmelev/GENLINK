@@ -30,5 +30,5 @@
     "make_ram_efficient_dataset":true,
     "num_workers": 8,
     "use_torch_geometric_trainer": false,
-    "treat_graph_based_features_like_one_hot": false
+    "treat_graph_based_features_like_one_hot": true
 }
