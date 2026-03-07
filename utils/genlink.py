@@ -220,7 +220,26 @@ class DataProcessor:
         return classes
 
     def get_unique_nodes(self, df):
-        return pd.concat([df['node_id1'], df['node_id2']], axis=0).drop_duplicates().to_numpy()
+        # assert pd.concat([df['node_id1'], df['node_id2']], axis=0).drop_duplicates().to_numpy().shape[0] == 614
+        # return pd.concat([df['node_id1'], df['node_id2']], axis=0).drop_duplicates().to_numpy()
+        nodes1 = df.loc[:, ['node_id1', 'label_id1']].copy()
+        nodes2 = df.loc[:, ['node_id2', 'label_id2']].copy()
+
+        nodes1 = nodes1.rename(columns={'node_id1': 'node', 'label_id1': 'label'})
+        nodes2 = nodes2.rename(columns={'node_id2': 'node', 'label_id2': 'label'})
+
+        all_nodes = pd.concat([nodes1, nodes2], axis=0)
+
+        unique_nodes = all_nodes.drop_duplicates(subset='node', keep='first')
+
+        non_masked = unique_nodes.loc[unique_nodes['label'] != 'masked', 'node']
+        masked = unique_nodes.loc[unique_nodes['label'] == 'masked', 'node']
+
+        non_masked_sorted = non_masked.sort_values(ignore_index=True)
+
+        assert pd.concat([non_masked_sorted, masked], ignore_index=True).to_numpy().shape[0] == 614
+
+        return pd.concat([non_masked_sorted, masked], ignore_index=True).to_numpy()
 
     def get_node_names_to_int_mapping(self, unique_nodes):
         # d = torch.load(r"C:\HSE\genotek-nationality-analysis\data\mapping_indices.pt")
@@ -255,12 +274,16 @@ class DataProcessor:
 
         df_node_classes.columns = ['node', 'class_id']
 
-        return df_node_classes.sort_values(by=['node'])
+        return df_node_classes.sort_values(by=['node']).reset_index(drop=True) # just for good naming of the rows
 
     def node_classes_to_dict(self):
         return {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
         
     def generate_random_train_valid_test_nodes(self, train_size, valid_size, test_size, random_state, save_dir=None, mask_size=None, sub_train_size=None, keep_train_nodes=True, mask_random_state=None):
+        
+        print('shape:', self.node_classes_sorted.shape)
+        print(self.node_classes_sorted.head(), self.node_classes_sorted['class_id'].sum())
+        
         if train_size + valid_size + test_size != 1.0:
             raise Exception("All sizes should add up to 1.0!")
 
@@ -325,6 +348,7 @@ class DataProcessor:
                 assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
 
         if mask_size is not None:
+            print(sum(self.train_nodes), sum(self.test_nodes))
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
         else:
             print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% of all nodes in dataset were used')
@@ -1098,7 +1122,7 @@ class DataProcessor:
             if not np.all(features[:-1][node_mask[:-1]] != 1 / len(self.classes)):
                 raise Exception('Uniform distributions encountered not for masked nodes!')
             assert np.all(features[-1] == (1 / len(self.classes)))
-            
+ 
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
              'weight': -torch.log2(torch.tensor(weighted_edges[:, 2]) / 6600) if log_edge_weights else torch.tensor(weighted_edges[:, 2]), # try 1) log(IBD/8 * e) 2) 1 / T
@@ -1205,6 +1229,9 @@ class DataProcessor:
                     assert graph.x.shape[0] == len(current_test_nodes)
 
                     self.array_of_graphs_for_testing.append(graph)
+            
+            print([int(lll.y[-1]) for lll in self.array_of_graphs_for_testing], sum([int(lll.y[-1]) for lll in self.array_of_graphs_for_testing]))
+            
 
         elif feature_type == 'graph_based' and model_type == 'homogeneous':
             if train_dataset_type == 'one' and test_dataset_type == 'multiple':
@@ -1852,6 +1879,7 @@ class Trainer:
                     graphs[i].to('cpu')
                 else:
                     p = F.softmax(self.model(graphs[i].to(self.device))[-1], dim=0).cpu().detach().numpy()
+                    print(int(graphs[i].y[-1].cpu().detach().numpy()), np.round(p, 2))
                     y_pred.append(np.argmax(p))
                     y_true.append(int(graphs[i].y[-1].cpu().detach().numpy()))
                     graphs[i].to('cpu')
@@ -1912,7 +1940,7 @@ class Trainer:
                     print(f"f1 macro score on valid dataset for class {i} which is {self.data.classes[i]}: {score_per_class}")
 
         current_f1_score_macro = f1_score(y_true, y_pred, average='macro')
-        if current_f1_score_macro >= self.max_f1_score_macro:
+        if current_f1_score_macro > self.max_f1_score_macro:
             self.patience_counter = 0
             self.max_f1_score_macro = current_f1_score_macro
             if not self.disable_printing:
@@ -1924,10 +1952,23 @@ class Trainer:
                 print(f'Metric was not improved for the {self.patience_counter}th time')
 
     def test(self, mask=False):
+        total_sum = 0.0
+        for param in self.model.parameters():
+            total_sum += param.data.sum().item()
+
+        print("Total sum of all model weights:", total_sum)
         self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device)
         self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
         self.model.eval()
+        total_sum = 0.0
+        for param in self.model.parameters():
+            total_sum += param.data.sum().item()
+
+        print("Total sum of all model weights:", total_sum)
         y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_testing, mask=mask, phase='scoring')
+
+        print('GOGOGOGOGGO', sum(y_true), sum(y_pred))
+
         if not self.disable_printing:
             print('Test report')
             print(classification_report(y_true, y_pred))
@@ -2038,7 +2079,7 @@ class Trainer:
                     self.model.train()
 
                     selector = np.array([i for i in range(len(self.data.array_of_graphs_for_training))])
-                    np.random.shuffle(selector)
+                    # np.random.shuffle(selector)
 
                     mean_epoch_loss = []
 
@@ -2046,9 +2087,13 @@ class Trainer:
                     pbar.set_postfix({'val_best_score': self.max_f1_score_macro})
                     for j, data_curr in enumerate(pbar):
                         n = selector[j]
+                        # print(n)
                         data_curr = self.data.array_of_graphs_for_training[n].to(self.device)
                         optimizer.zero_grad()
                         out = self.model(data_curr)
+                        # print(out[-1])
+                        # if n==1:
+                        #     assert 0
                         # print(data_curr.x.shape, out[-1], data_curr.y[-1])
                         loss = criterion(out[-1], data_curr.y[-1])
                         loss.backward()

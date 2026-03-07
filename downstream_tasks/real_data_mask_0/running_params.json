@@ -7,7 +7,7 @@
     "mask_size": 0.0,
     "sub_train_size": [0.25], 
     "keep_train_nodes": true, 
-    "mask_random_state": 42,
+    "mask_random_state": 4200000000,
     "lr":[0.0001],
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
