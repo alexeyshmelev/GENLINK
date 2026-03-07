@@ -19,7 +19,7 @@
     "evaluation_steps":[10],
     "loss_weights":[null],
     "masking":true,
-    "disable_printing":true,
+    "disable_printing":false,
     "seed":42,
     "correct_and_smooth":null,
     "log_ibd":false,
@@ -29,5 +29,6 @@
     "no_mask_class_in_df":true,
     "make_ram_efficient_dataset":false,
     "num_workers": 8,
-    "use_torch_geometric_trainer": false
+    "use_torch_geometric_trainer": false,
+    "treat_graph_based_features_like_one_hot": false
 }

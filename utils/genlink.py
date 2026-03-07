@@ -115,6 +115,7 @@ class GraphDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
+        # print(self.__len__(), idx)
         return self.data[idx]
     
 
@@ -387,6 +388,9 @@ class DataProcessor:
         
     def generate_random_train_valid_test_nodes(self, train_size, valid_size, test_size, random_state, save_dir=None, mask_size=None, sub_train_size=None, keep_train_nodes=True, mask_random_state=None):
         
+        # print('shape:', self.node_classes_sorted.shape)
+        # print(self.node_classes_sorted.head(), self.node_classes_sorted['class_id'].sum())
+
         if self.no_mask_class_in_df:
             if train_size + valid_size + test_size != 1.0:
                 raise Exception("All sizes should add up to 1.0!")
@@ -453,6 +457,7 @@ class DataProcessor:
                     assert len(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes) == self.node_classes_sorted.shape[0]
 
             if mask_size is not None:
+                # print(sum(self.train_nodes), sum(self.test_nodes))
                 print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes + self.mask_nodes))}) of all nodes in dataset were used to create splits (if not 100% then some artificially masked nodes were not used)')
             else:
                 print(f'{len(set(self.train_nodes + self.valid_nodes + self.test_nodes)) / self.node_classes_sorted.shape[0] * 100}% ({len(set(self.train_nodes + self.valid_nodes + self.test_nodes))}) of all nodes in dataset were used to create splits (no masked nodes assumed)')
@@ -1478,7 +1483,7 @@ class DataProcessor:
                 if not np.all(features[:-1][node_mask[:-1]] != 1 / (len(self.classes) - 1)):
                     raise Exception('Uniform distributions encountered not for masked nodes!')
                 assert np.all(features[-1] == (1 / (len(self.classes) - 1)))
-            
+    
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
              'weight': -torch.log2(torch.tensor(weighted_edges[:, 2]) / 6600) if log_edge_weights else torch.tensor(weighted_edges[:, 2]), # try 1) log(IBD/8 * e) 2) 1 / T
@@ -1623,6 +1628,8 @@ class DataProcessor:
                         assert graph.x.shape[0] == len(current_test_nodes)
 
                         self.array_of_graphs_for_testing.append(graph)
+            
+            # print([int(lll.y[-1]) for lll in self.array_of_graphs_for_testing], sum([int(lll.y[-1]) for lll in self.array_of_graphs_for_testing]))
 
         elif feature_type == 'graph_based' and model_type == 'homogeneous':
             if train_dataset_type == 'one' and test_dataset_type == 'multiple':
@@ -2701,7 +2708,7 @@ class Trainer:
                 count_dict = dict(sorted(count_dict.items()))
                 self.weight = torch.tensor(list(count_dict.values())).to(self.device)
                 self.weight = torch.max(self.weight) / self.weight
-        self.batch_size = batch_size # not used by far
+        self.batch_size = batch_size
         self.log_dir = log_dir
         self.patience = patience
         self.num_epochs = num_epochs
@@ -2767,6 +2774,7 @@ class Trainer:
                         # graphs[i].to('cpu')
                     else:
                         p = F.softmax(self.model(sample)[-1], dim=0).cpu().detach().numpy()
+                        # print(int(sample.y[-1].cpu().detach().numpy()), np.round(p, 2))
                         y_pred.append(np.argmax(p))
                         y_true.append(int(sample.y[-1].cpu().detach().numpy()))
                         # graphs[i].to('cpu')
@@ -2852,10 +2860,22 @@ class Trainer:
 
     def test(self, mask=False):
         if self.model.__class__.__name__ != 'GL_LR':
+            # total_sum = 0.0
+            # for param in self.model.parameters():
+            #     total_sum += param.data.sum().item()
+
+            # print("Total sum of all model weights:", total_sum)
             self.model = self.model_cls(self.data.array_of_graphs_for_training[0]).to(self.device)
             self.model.load_state_dict(torch.load(self.log_dir + '/model_best.bin'))
             self.model.eval()
+            # total_sum = 0.0
+            # for param in self.model.parameters():
+            #     total_sum += param.data.sum().item()
+
+            # print("Total sum of all model weights:", total_sum)
         y_true, y_pred = self.compute_metrics_cross_entropy(self.data.array_of_graphs_for_testing, mask=mask, phase='scoring')
+
+        # print('GOGOGOGOGGO', sum(y_true), sum(y_pred))
 
         f1_macro_score_only_mask_connect = -100
         f1_macro_score_only_not_mask_connect = -100
@@ -3036,6 +3056,7 @@ class Trainer:
                         for sample in train_batch:
                             optimizer.zero_grad()
                             out = self.model(sample)
+                            # print(out[-1])
                             # print(data_curr.x.shape, out[-1], data_curr.y[-1])
                             loss = criterion(out[-1], sample.y[-1])
                             loss.backward()
@@ -3043,6 +3064,9 @@ class Trainer:
                             optimizer.step()
                             scheduler.step()
                             pbar.update(1)
+
+                        # assert 0
+                        
 
 
                     # for j, data_curr in enumerate(pbar):
