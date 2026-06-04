@@ -1,0 +1,1 @@
+{"evaluation_steps": 10, "loss": "CrossEntropyLoss", "loss_weights": null, "lr": 0.0001, "patience": 10, "train_iterations_per_sample": 1000, "wd": 0.0001}
