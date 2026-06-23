@@ -1413,3 +1413,130 @@ class GL_GATConv_9l_512h(torch.nn.Module):
 
         h = self.fc(h)
         return h
+
+
+def _gnnm_get_tagconv_inputs(data):
+    if hasattr(data, "adj") and data.adj is not None:
+        return data.adj, None
+
+    return data.edge_index, data.weight.float()
+
+
+def _gnnm_run_tagconv(conv, x, edge_input, edge_weight):
+    if edge_weight is None:
+        return conv(x, edge_input)
+
+    return conv(x, edge_input, edge_weight)
+
+
+class GNNMBatchEnsembleBlock(torch.nn.Module):
+    def __init__(self, in_features, out_features, is_first, tabm_inits):
+        super().__init__()
+
+        self.R = nn.Parameter(torch.empty(tabm_inits, in_features))
+        self.S = nn.Parameter(torch.empty(tabm_inits, out_features))
+        self.B = nn.Parameter(torch.empty(tabm_inits, out_features))
+        self.W = nn.Linear(in_features, out_features, bias=False)
+
+        self.is_first = is_first
+        self.tabm_inits = tabm_inits
+
+        self.reset_parameters()
+
+    @torch.no_grad()
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.W.weight)
+
+        if self.is_first:
+            self.R.bernoulli_(0.5).mul_(2).sub_(1)
+        else:
+            self.R.fill_(1.0)
+
+        self.S.fill_(1.0)
+        self.B.zero_()
+
+    def forward(self, x, tabm_seed):
+        x = x * self.R[tabm_seed]
+        x = self.W(x)
+        x = x * self.S[tabm_seed]
+        x = x + self.B[tabm_seed]
+        return x
+
+
+class GNNMBase(torch.nn.Module):
+    def __init__(self, data):
+        super().__init__()
+
+        hidden_dim = 512
+        self.tabm_inits = 4
+
+        self.input_be1 = GNNMBatchEnsembleBlock(
+            int(data.num_features),
+            int(data.num_features),
+            is_first=True,
+            tabm_inits=self.tabm_inits,
+        )
+
+        self.input_be2 = GNNMBatchEnsembleBlock(
+            int(data.num_features),
+            hidden_dim,
+            is_first=False,
+            tabm_inits=self.tabm_inits,
+        )
+
+        self.conv1 = TAGConv(hidden_dim, hidden_dim)
+        self.conv2 = TAGConv(hidden_dim, hidden_dim)
+        self.conv3 = TAGConv(hidden_dim, hidden_dim)
+
+        self.n1 = GraphNorm(hidden_dim)
+        self.n2 = GraphNorm(hidden_dim)
+
+        self.output_be = GNNMBatchEnsembleBlock(
+            hidden_dim,
+            int(data.num_classes),
+            is_first=False,
+            tabm_inits=self.tabm_inits,
+        )
+
+    def forward_one_member(self, data, tabm_seed):
+        x = data.x.float()
+        edge_input, edge_weight = _gnnm_get_tagconv_inputs(data)
+
+        x = F.elu(self.input_be1(x, tabm_seed))
+        x = F.elu(self.input_be2(x, tabm_seed))
+
+        x_prev = x
+        x = F.elu(_gnnm_run_tagconv(self.conv1, x, edge_input, edge_weight))
+        x = self.n1(x_prev + x)
+
+        x_prev = x
+        x = F.elu(_gnnm_run_tagconv(self.conv2, x, edge_input, edge_weight))
+        x = self.n2(x_prev + x)
+
+        x_prev = x
+        x = F.elu(_gnnm_run_tagconv(self.conv3, x, edge_input, edge_weight))
+        x = x_prev + x
+
+        return self.output_be(x, tabm_seed)
+
+
+class GL_GNNM(GNNMBase):
+    def __init__(self, data):
+        super().__init__(data)
+
+    def forward(self, data):
+        logits = None
+
+        for tabm_seed in range(self.tabm_inits):
+            member_logits = self.forward_one_member(data, tabm_seed)
+            logits = member_logits if logits is None else logits + member_logits
+
+        return logits / self.tabm_inits
+
+
+class GL_gnnm_ram_optimized(GNNMBase):
+    def __init__(self, data):
+        super().__init__(data)
+
+    def forward(self, data, tabm_seed):
+        return self.forward_one_member(data, tabm_seed)

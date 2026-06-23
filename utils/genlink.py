@@ -50,7 +50,7 @@ from scipy.stats import bernoulli, expon, norm, powerlaw, pearsonr
 from sklearn.model_selection import train_test_split
 from torch_geometric.utils.convert import from_networkx
 from torch_geometric.data import InMemoryDataset, Data, Batch
-from torch_geometric.utils import one_hot
+from torch_geometric.utils import one_hot, to_torch_csr_tensor
 from sklearn.semi_supervised import LabelPropagation, LabelSpreading
 from sklearn.cluster import SpectralClustering, AgglomerativeClustering
 from sklearn.metrics import classification_report, confusion_matrix
@@ -232,7 +232,7 @@ def simulate_graph_fn(classes, means, counts, pop_index, path):
 
 
 class DataProcessor:
-    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None, no_mask_class_in_df=True):
+    def __init__(self, path, is_path_object=False, disable_printing=True, dataset_name=None, no_mask_class_in_df=True, use_pca_coords_for_graph_based_features=False, use_pca_coords_for_one_hot_features=False):
         self.dataset_name: str = dataset_name
         self.train_size: float = None
         self.valid_size: float = None
@@ -248,6 +248,10 @@ class DataProcessor:
         self.classes: list[str] = self.get_classes(self.df)
         self.node_classes_sorted: pd.DataFrame = self.get_node_classes(self.df)
         self.class_to_int_mapping: dict[int, str] = {i:n for i, n in enumerate(self.classes)}
+        self.use_pca_coords_for_graph_based_features = use_pca_coords_for_graph_based_features
+        self.use_pca_coords_for_one_hot_features = use_pca_coords_for_one_hot_features
+        self.pca_dim = 20
+        self.node_pca_coords = (self.make_node_pca_coords_from_edge_table() if (self.use_pca_coords_for_graph_based_features or self.use_pca_coords_for_one_hot_features) else None)
         self.class_colors = self.get_class_colors()
         # self.nx_graph = self.make_networkx_graph() # line order matters because self.df is modified in above functions
         self.train_nodes = None
@@ -376,6 +380,42 @@ class DataProcessor:
 
         return df_node_classes.sort_values(by=['node']).reset_index(drop=True) # just for good naming of the rows
 
+    def make_node_pca_coords_from_edge_table(self):
+        pca_dim = self.pca_dim
+        num_nodes = len(self.node_names_to_int_mapping)
+
+        node1_pca = pd.DataFrame(
+            np.concatenate(
+                [
+                    self.df.iloc[:, [0]].to_numpy(),
+                    self.df.iloc[:, 6:6 + pca_dim].to_numpy(dtype=np.float32),
+                ],
+                axis=1,
+            )
+        )
+        node2_pca = pd.DataFrame(
+            np.concatenate(
+                [
+                    self.df.iloc[:, [1]].to_numpy(),
+                    self.df.iloc[:, 6 + pca_dim:6 + 2 * pca_dim].to_numpy(dtype=np.float32),
+                ],
+                axis=1,
+            )
+        )
+
+        pca_columns = [f"pca_{i}" for i in range(pca_dim)]
+        node1_pca.columns = ["node"] + pca_columns
+        node2_pca.columns = ["node"] + pca_columns
+
+        node_pca = pd.concat([node1_pca, node2_pca], axis=0, ignore_index=True)
+        node_pca = node_pca.drop_duplicates(subset="node", keep="first")
+
+        pca = np.zeros((num_nodes, pca_dim), dtype=np.float32)
+        node_ids = node_pca["node"].to_numpy(dtype=np.int64)
+        pca[node_ids] = node_pca.iloc[:, 1:].to_numpy(dtype=np.float32)
+
+        return pca
+    
     def node_classes_to_dict(self, return_hashmap=False):
         if return_hashmap:
             node_classes = {n: c for index, pair in self.node_classes_sorted.iterrows() for n, c in [pair.tolist()]}
@@ -1446,6 +1486,12 @@ class DataProcessor:
             else:
                 features = self.make_one_hot_encoded_features(numba.typed.List(curr_nodes), numba.typed.List([specific_node]), hashmap,
                                                               dict_node_classes, numba.typed.List(self.classes), masked_node_hashmap)
+            
+            if self.use_pca_coords_for_one_hot_features:
+                # print('PCA!!!')
+                pca_features = self.node_pca_coords[np.asarray(curr_nodes, dtype=np.int64)]
+                features = np.concatenate([features, pca_features], axis=1)    
+            
             assert np.sum(np.array(features).sum(axis=1) == 0) == 0
         elif feature_type == 'graph_based':
             specific_masked_node_hashmap = masked_node_hashmap.copy()
@@ -1458,6 +1504,11 @@ class DataProcessor:
             else:
                 # features = self.make_graph_based_features(df.to_numpy(), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
                 features = self.make_graph_based_features_ram_efficient(df.to_numpy(dtype=np.float64), hashmap, specific_masked_node_hashmap, len(self.classes), len(curr_nodes), log_edge_weights)
+
+            if self.use_pca_coords_for_graph_based_features:
+                pca_features = self.node_pca_coords[np.asarray(curr_nodes, dtype=np.int64)]
+                features = np.concatenate([features, pca_features], axis=1)
+
         else:
             raise Exception('Such feature type is not known!')
         
@@ -1471,18 +1522,32 @@ class DataProcessor:
 
         # checking
         if feature_type == 'one_hot':
-            if no_mask_class_in_df:
-                if not np.all(features[~node_mask] == 1 / len(self.classes)):
-                    raise Exception('Not uniform distributions encountered for masked nodes!')
-                if not np.all(features[:-1][node_mask[:-1]] != 1 / len(self.classes)):
-                    raise Exception('Uniform distributions encountered not for masked nodes!')
-                assert np.all(features[-1] == (1 / len(self.classes)))
+            if not self.use_pca_coords_for_one_hot_features:
+                if no_mask_class_in_df:
+                    if not np.all(features[~node_mask] == 1 / len(self.classes)):
+                        raise Exception('Not uniform distributions encountered for masked nodes!')
+                    if not np.all(features[:-1][node_mask[:-1]] != 1 / len(self.classes)):
+                        raise Exception('Uniform distributions encountered not for masked nodes!')
+                    assert np.all(features[-1] == (1 / len(self.classes)))
+                else:
+                    if not np.all(features[~node_mask] == 1 / (len(self.classes) - 1)):
+                        raise Exception('Not uniform distributions encountered for masked nodes!')
+                    if not np.all(features[:-1][node_mask[:-1]] != 1 / (len(self.classes) - 1)):
+                        raise Exception('Uniform distributions encountered not for masked nodes!')
+                    assert np.all(features[-1] == (1 / (len(self.classes) - 1)))
             else:
-                if not np.all(features[~node_mask] == 1 / (len(self.classes) - 1)):
-                    raise Exception('Not uniform distributions encountered for masked nodes!')
-                if not np.all(features[:-1][node_mask[:-1]] != 1 / (len(self.classes) - 1)):
-                    raise Exception('Uniform distributions encountered not for masked nodes!')
-                assert np.all(features[-1] == (1 / (len(self.classes) - 1)))
+                if no_mask_class_in_df:
+                    if not np.all(features[:, :-20][~node_mask] == 1 / len(self.classes)):
+                        raise Exception('Not uniform distributions encountered for masked nodes!')
+                    if not np.all(features[:-1, :-20][node_mask[:-1]] != 1 / len(self.classes)):
+                        raise Exception('Uniform distributions encountered not for masked nodes!')
+                    assert np.all(features[-1, :-20] == (1 / len(self.classes)))
+                else:
+                    if not np.all(features[:, :-20][~node_mask] == 1 / (len(self.classes) - 1)):
+                        raise Exception('Not uniform distributions encountered for masked nodes!')
+                    if not np.all(features[:-1, :-20][node_mask[:-1]] != 1 / (len(self.classes) - 1)):
+                        raise Exception('Uniform distributions encountered not for masked nodes!')
+                    assert np.all(features[-1, :-20] == (1 / (len(self.classes) - 1)))
     
         graph = Data.from_dict(
             {'y': torch.tensor(targets, dtype=torch.long), 'x': torch.tensor(features),
@@ -3162,10 +3227,13 @@ class Trainer:
 
 
 class TorchGeometricGraphDataset(Dataset):
-    def __init__(self, data, init_graph, tg_init_graph, feature_type, phase, train_node_list, mask_node_list, treat_graph_based_features_like_one_hot = False, val_node_list=None, test_node_list=None):
+    def __init__(self, data, init_graph, tg_init_graph, feature_type, phase, train_node_list, mask_node_list, treat_graph_based_features_like_one_hot = False, val_node_list=None, test_node_list=None, graph_feature_dim=None, expected_graph_based_feature_dim=None, use_pca_coords_for_graph_based_features=False,):
         self.init_graph = init_graph
         self.tg_init_graph = tg_init_graph
         self.treat_graph_based_features_like_one_hot = treat_graph_based_features_like_one_hot
+        self.graph_feature_dim = graph_feature_dim
+        self.expected_graph_based_feature_dim = expected_graph_based_feature_dim
+        self.use_pca_coords_for_graph_based_features = use_pca_coords_for_graph_based_features
 
         self.mask_class_idx = data.classes.index('masked')
 
@@ -3326,11 +3394,11 @@ class TorchGeometricGraphDataset(Dataset):
                         feats.extend(max_w)
                         feats.extend(sum_seg)
 
-                        curr_tg_init_graph.x[nb] = torch.tensor(
-                            feats,
-                            dtype=curr_tg_init_graph.x.dtype,
-                            device=curr_tg_init_graph.x.device,
-                        )
+                        curr_tg_init_graph.x[nb, :self.graph_feature_dim] = torch.tensor(
+                                                                                        feats,
+                                                                                        dtype=curr_tg_init_graph.x.dtype,
+                                                                                        device=curr_tg_init_graph.x.device,
+                                                                                    )
 
                     assert curr_tg_init_graph.x.shape[1] == self.mask_class_idx * 5
                     subgraph = curr_tg_init_graph.subgraph(torch.tensor(self.train_node_list + self.mask_node_list))
@@ -3353,20 +3421,29 @@ class TorchGeometricGraphDataset(Dataset):
 
 
 class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with real masks for now with latest updates!!!
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, treat_graph_based_features_like_one_hot=False):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, treat_graph_based_features_like_one_hot=False, use_pca_coords_for_graph_based_features=False, use_sparse_adjacency=True, use_amp=False, amp_dtype="bf16"):
         self.data = data
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
         assert len(self.data.array_of_graphs_for_training) == len(self.data.array_of_graphs_for_validation) == len(self.data.array_of_graphs_for_testing) == 0
         self.treat_graph_based_features_like_one_hot = treat_graph_based_features_like_one_hot
+        self.use_pca_coords_for_graph_based_features = use_pca_coords_for_graph_based_features
+        self.use_sparse_adjacency = use_sparse_adjacency
+        self.use_amp = use_amp
+        self.amp_dtype = amp_dtype
+
 
         self.feature_type = feature_type
         self.init_graph = self.data.nx_graph
+        self.mask_class_idx = self.data.classes.index('masked') if 'masked' in self.data.classes else len(self.data.classes)
+        self.graph_feature_dim = self.mask_class_idx * 5
+        self.pca_feature_dim = self.data.pca_dim if self.use_pca_coords_for_graph_based_features else 0
+        self.expected_graph_based_feature_dim = self.graph_feature_dim + self.pca_feature_dim
         if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot: 
             print('Using one_hot features...')
             x = {node:{'x': ([0 if i != cls else 1 for i in range(len(self.data.classes) - 1)] if cls != self.data.classes.index('masked') else [1/(len(self.data.classes) - 1) for i in range(len(self.data.classes) - 1)]) if 'masked' in self.data.classes else [0 if i != cls else 1 for i in range(len(self.data.classes))]} for node, cls in nx.get_node_attributes(self.init_graph,'class').items()}
             nx.set_node_attributes(self.init_graph, x)
 
-            self.tg_init_graph = self.from_nx_preserve_ids(self.init_graph, device='cpu', float_dtype=torch.float32)
+            self.tg_init_graph = self.from_nx_preserve_ids(self.init_graph, device='cpu', float_dtype=torch.float64)
 
             # print(0.25 in self.tg_init_graph.x)
 
@@ -3440,6 +3517,9 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                 # 5) total number of IBD segments
                 feats.extend(sum_seg)
 
+                if self.use_pca_coords_for_graph_based_features:
+                    feats.extend(self.data.node_pca_coords[node].tolist())
+
                 x_attr[node] = {'x': feats}
 
             # attach fresh features to the NetworkX graph
@@ -3454,6 +3534,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
         else:
             raise 'No such node feature option!'
+
+        if hasattr(self.data, "df"):
+            self.data.df = None
+
+        gc.collect()
 
         self.model = None
         self.gpuidx = cuda_device_specified
@@ -3571,6 +3656,45 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
         return data
 
+    def prepare_pyg_sample(self, sample):
+        sample = sample.to(self.device, non_blocking=True)
+
+        if hasattr(sample, "x") and sample.x is not None:
+            sample.x = sample.x.float()
+
+        if hasattr(sample, "weight") and sample.weight is not None:
+            sample.weight = sample.weight.float()
+
+        if self.use_sparse_adjacency:
+            if not hasattr(sample, "adj") or sample.adj is None or sample.adj.device != self.device:
+                edge_weight = sample.weight if hasattr(sample, "weight") else None
+
+                sample.adj = to_torch_csr_tensor(
+                    sample.edge_index,
+                    edge_weight,
+                    size=(sample.num_nodes, sample.num_nodes),
+                )
+
+        return sample
+
+    def amp_context(self):
+        if self.device.type != "cuda":
+            return torch.amp.autocast("cpu", enabled=False)
+
+        dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
+
+        return torch.amp.autocast(
+            "cuda",
+            enabled=self.use_amp,
+            dtype=dtype,
+        )
+
+    def model_is_ram_optimized_gnnm(self):
+        model_name = self.model.__class__.__name__.lower()
+        return (
+            model_name.startswith("gl_gnnm_ram_optimized")
+            or model_name.startswith("gnnm_ram_optimized")
+        )
 
     def compute_metrics_cross_entropy(self, dataset_phase, mask=False, phase=None):
         y_true = []
@@ -3585,8 +3709,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                                             mask_node_list=self.data.mask_nodes,
                                             val_node_list=self.data.valid_nodes,
                                             test_node_list=self.data.test_nodes,
-                                            treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot)
-        loader = DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False, collate_fn=collate_fn)
+                                            treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot,
+                                            graph_feature_dim=self.graph_feature_dim,
+                                            expected_graph_based_feature_dim=self.expected_graph_based_feature_dim,
+                                            use_pca_coords_for_graph_based_features=self.use_pca_coords_for_graph_based_features)
+        loader = DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=False, shuffle=False, collate_fn=collate_fn)
         pbar = tqdm(range(len(dataset)), desc='Compute metrics', disable=self.disable_printing)
 
         if self.feature_type == 'one_hot' and not self.treat_graph_based_features_like_one_hot:
@@ -3596,8 +3723,37 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
                 for sample in batch:
                     # with autocast(device_type='cuda', dtype=torch.float16):
+
+                    if hasattr(sample, "weight") and sample.weight is not None:
+                        sample.weight = sample.weight.float()
+
+                    if self.use_sparse_adjacency:
+                        edge_weight = sample.weight if hasattr(sample, "weight") and sample.weight is not None else None
+                        sample.adj = to_torch_csr_tensor(
+                            sample.edge_index,
+                            edge_weight,
+                            size=(sample.num_nodes, sample.num_nodes),
+                        )
+
                     assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
-                    p = F.softmax(self.model(sample)[sample.mask][0].to('cpu').float(), dim=0).numpy()
+                    
+                    amp_enabled = self.use_amp and self.device.type == "cuda"
+                    amp_dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
+
+                    with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                        model_name = self.model.__class__.__name__.lower()
+
+                        if model_name.startswith("gl_gnnm_ram_optimized") or model_name.startswith("gnnm_ram_optimized"):
+                            out = None
+                            for tabm_seed in range(self.model.tabm_inits):
+                                member_out = self.model(sample, tabm_seed=tabm_seed)
+                                out = member_out if out is None else out + member_out
+                            out = out / self.model.tabm_inits
+                        else:
+                            out = self.model(sample)
+
+                    p = F.softmax(out[sample.mask][0].float(), dim=0).to('cpu').detach().numpy()
+
                     # print('AAAAAAAAAAAAAAAAAAAAAAA', p, int(sample.y[sample.mask][0].to('cpu').numpy()))
                     # assert False
                     y_pred.append(np.argmax(p))
@@ -3636,8 +3792,35 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                         if phase=='training':
                             raise 'Not implemented yet!'
                         elif phase=='scoring':
-                            p = F.softmax(self.model(sample)[sample.mask][0],
-                                        dim=0).to('cpu').detach().numpy()
+                            
+                            if hasattr(sample, "weight") and sample.weight is not None:
+                                sample.weight = sample.weight.float()
+
+                            if self.use_sparse_adjacency:
+                                edge_weight = sample.weight if hasattr(sample, "weight") and sample.weight is not None else None
+                                sample.adj = to_torch_csr_tensor(
+                                    sample.edge_index,
+                                    edge_weight,
+                                    size=(sample.num_nodes, sample.num_nodes),
+                                )
+
+                            amp_enabled = self.use_amp and self.device.type == "cuda"
+                            amp_dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
+
+                            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                                model_name = self.model.__class__.__name__.lower()
+
+                                if model_name.startswith("gl_gnnm_ram_optimized") or model_name.startswith("gnnm_ram_optimized"):
+                                    out = None
+                                    for tabm_seed in range(self.model.tabm_inits):
+                                        member_out = self.model(sample, tabm_seed=tabm_seed)
+                                        out = member_out if out is None else out + member_out
+                                    out = out / self.model.tabm_inits
+                                else:
+                                    out = self.model(sample)
+
+                            p = F.softmax(out[sample.mask][0].float(), dim=0).to('cpu').detach().numpy()
+
                             y_pred.append(np.argmax(p))
                             y_true.append(sample.y[sample.mask][0].to('cpu').detach().numpy().item())
                         else:
@@ -3792,6 +3975,14 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
         scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
         # scaler = GradScaler()
+        scaler = torch.amp.GradScaler(
+            "cuda",
+            enabled=(
+                self.use_amp
+                and self.amp_dtype == "fp16"
+                and self.device.type == "cuda"
+            ),
+        )
         print(f'Training for data: {self.data.dataset_name}')
         self.max_f1_score_macro = 0
         self.patience_counter = 0
@@ -3806,8 +3997,11 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                                                         phase='train', 
                                                         train_node_list=self.data.train_nodes, 
                                                         mask_node_list=self.data.mask_nodes,
-                                                        treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot)
-            train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True, collate_fn=collate_fn)
+                                                        treat_graph_based_features_like_one_hot = self.treat_graph_based_features_like_one_hot,
+                                                        graph_feature_dim=self.graph_feature_dim,
+                                                        expected_graph_based_feature_dim=self.expected_graph_based_feature_dim,
+                                                        use_pca_coords_for_graph_based_features=self.use_pca_coords_for_graph_based_features)
+            train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=False, shuffle=True, collate_fn=collate_fn)
 
 
             if self.feature_type == 'one_hot':
@@ -3831,16 +4025,64 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
                         for sample in train_batch:
                             # print('SSSSSSSSSSSSSSSSSSSSSS')
-                            optimizer.zero_grad()
-                            out = self.model(sample)
+
+                            if hasattr(sample, "weight") and sample.weight is not None:
+                                sample.weight = sample.weight.float()
+
+                            if self.use_sparse_adjacency:
+                                edge_weight = sample.weight if hasattr(sample, "weight") and sample.weight is not None else None
+                                sample.adj = to_torch_csr_tensor(
+                                    sample.edge_index,
+                                    edge_weight,
+                                    size=(sample.num_nodes, sample.num_nodes),
+                                )
+
                             if not self.treat_graph_based_features_like_one_hot:
                                 assert torch.all(sample.x[sample.mask] == torch.full((sample.x.shape[1],), 1/sample.x.shape[1]).to(self.device))
-                            preds_for_loss = out[sample.mask][0]
-                            tgts_for_loss = sample.y[sample.mask][0]
-                            # print('AAAAAAAAAAAAAAAA', preds_for_loss.dtype, tgts_for_loss.dtype)
-                            # with autocast(device_type='cuda', dtype=torch.float32):
-                            loss = criterion(preds_for_loss, tgts_for_loss)
-                            loss.backward()
+
+                            optimizer.zero_grad(set_to_none=True)
+
+                            amp_enabled = self.use_amp and self.device.type == "cuda"
+                            amp_dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
+                            model_name = self.model.__class__.__name__.lower()
+
+                            if model_name.startswith("gl_gnnm_ram_optimized") or model_name.startswith("gnnm_ram_optimized"):
+                                total_loss = 0.0
+
+                                for tabm_seed in range(self.model.tabm_inits):
+                                    with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                                        out = self.model(sample, tabm_seed=tabm_seed)
+                                        loss = criterion(out[sample.mask], sample.y[sample.mask])
+                                        loss = loss / self.model.tabm_inits
+
+                                    if scaler.is_enabled():
+                                        scaler.scale(loss).backward()
+                                    else:
+                                        loss.backward()
+
+                                    total_loss += loss.detach().cpu().item()
+
+                                if scaler.is_enabled():
+                                    scaler.step(optimizer)
+                                    scaler.update()
+                                else:
+                                    optimizer.step()
+
+                                mean_epoch_loss.append(total_loss)
+
+                            else:
+                                with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                                    out = self.model(sample)
+                                    loss = criterion(out[sample.mask], sample.y[sample.mask])
+
+                                if scaler.is_enabled():
+                                    scaler.scale(loss).backward()
+                                    scaler.step(optimizer)
+                                    scaler.update()
+                                else:
+                                    loss.backward()
+                                    optimizer.step()
+
                             mean_epoch_loss.append(loss.detach().cpu().numpy())
                             optimizer.step()
                             scheduler.step()
@@ -3874,7 +4116,20 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                     for train_batch in train_loader:
                         train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
                         assert len(train_batch) == 1
-                        data_curr = train_batch[0]
+
+                        data_curr = train_batch[0].to(self.device, non_blocking=True)
+                        data_curr.x = data_curr.x.float()
+
+                        if hasattr(data_curr, "weight") and data_curr.weight is not None:
+                            data_curr.weight = data_curr.weight.float()
+
+                        if self.use_sparse_adjacency:
+                            edge_weight = data_curr.weight if hasattr(data_curr, "weight") and data_curr.weight is not None else None
+                            data_curr.adj = to_torch_csr_tensor(
+                                data_curr.edge_index,
+                                edge_weight,
+                                size=(data_curr.num_nodes, data_curr.num_nodes),
+                            )
                     # data_curr = self.data.array_of_graphs_for_training[0].to('cpu')
                     self.model.train()
                     for i in tqdm(range(self.train_iterations_per_sample), desc='Training iterations', disable=self.disable_printing):
@@ -3892,16 +4147,43 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                             self.model.train()
                             # self.data.array_of_graphs_for_training[0].to(self.device)
 
-                        optimizer.zero_grad()
-                        out = self.model(data_curr)
-                        # print(self.model.fc1.weight)
-                        # assert False
-                        # print(data_curr.x[data_curr.mask].detach().cpu().numpy().sum())
-                        # print(out[data_curr.mask].shape, len(self.data.train_nodes))
-                        # assert False
-                        loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
-                        loss.backward()
-                        optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
+
+                        amp_enabled = self.use_amp and self.device.type == "cuda"
+                        amp_dtype = torch.bfloat16 if self.amp_dtype == "bf16" else torch.float16
+                        model_name = self.model.__class__.__name__.lower()
+
+                        if model_name.startswith("gl_gnnm_ram_optimized") or model_name.startswith("gnnm_ram_optimized"):
+                            for tabm_seed in range(self.model.tabm_inits):
+                                with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                                    out = self.model(data_curr, tabm_seed=tabm_seed)
+                                    loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
+                                    loss = loss / self.model.tabm_inits
+
+                                if scaler.is_enabled():
+                                    scaler.scale(loss).backward()
+                                else:
+                                    loss.backward()
+
+                            if scaler.is_enabled():
+                                scaler.step(optimizer)
+                                scaler.update()
+                            else:
+                                optimizer.step()
+
+                        else:
+                            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                                out = self.model(data_curr)
+                                loss = criterion(out[data_curr.mask], data_curr.y[data_curr.mask])
+
+                            if scaler.is_enabled():
+                                scaler.scale(loss).backward()
+                                scaler.step(optimizer)
+                                scaler.update()
+                            else:
+                                loss.backward()
+                                optimizer.step()
+
                         scheduler.step()
                 else:
                     raise 'Not veryfied yet!'

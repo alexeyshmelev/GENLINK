@@ -160,6 +160,10 @@ class Runner:
                                 remove_saved_model_after_testing=True,
                                 plot_cm=self.running_params['plot_cm'],
                                 use_class_balance_weight=self.running_params['use_class_balance_weight'],
+                                # use_sparse_adjacency=self.running_params['use_sparse_adjacency'],
+                                # use_amp=self.running_params['use_amp'],
+                                # amp_dtype=self.running_params['amp_dtype'],
+                                # use_pca_coords_for_graph_based_features=self.running_params['use_pca_coords_for_graph_based_features']
                                 num_workers=self.running_params['num_workers'], **trainer_kwargs)
                 results = trainer.run()
 
@@ -192,7 +196,9 @@ class Runner:
                 if len(stss) > 1:
                     dataset_name += f'_sts_{sts}'
                 self.datasets[dataset_name] = dict()
-                the_dataset = DataProcessor(path, dataset_name=dataset_name, no_mask_class_in_df=self.running_params['no_mask_class_in_df'], disable_printing=self.running_params['disable_printing'])
+                the_dataset = DataProcessor(path, dataset_name=dataset_name, no_mask_class_in_df=self.running_params['no_mask_class_in_df'], disable_printing=self.running_params['disable_printing'],
+                                            use_pca_coords_for_graph_based_features=self.running_params['use_pca_coords_for_graph_based_features'],
+                                            use_pca_coords_for_one_hot_features=self.running_params['use_pca_coords_for_one_hot_features'])
                 for s in range(self.running_params['num_splits']):
                     dataset = copy.deepcopy(the_dataset)
                     dataset.generate_random_train_valid_test_nodes(train_size=self.running_params['train_size'], 

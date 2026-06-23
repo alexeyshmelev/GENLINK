@@ -1,5 +1,5 @@
 {
-    "gnn":{"GL_TAGConv_3l_512h_w_k3_gnorm":["one_hot", "graph_based"]},
-    "heuristic":["MaxEdgeCount", "MaxEdgeCountPerClassSize", "MaxSegmentCount", "LongestIbd", "MaxIbdSum", "MaxIbdSumPerClassSize"],
+    "gnn":{"GL_gnnm_ram_optimized":["graph_based"]},
+    "heuristic":[],
     "community_detection":[]
 }

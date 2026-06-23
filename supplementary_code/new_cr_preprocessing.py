@@ -1,28 +1,61 @@
-# Self-contained cell (FULLY UPDATED):
-# Builds & saves:
-#  (0) NON-SHARED NODES REPORT: nodes NOT shared across all 3 files
-#      columns: node_id, <graph_filename>, <pred_filename>, <tree_filename> with "yes"/"no"
-#  (A) SEMI-UNLABELED: edges touching at least one main node (NO unlabeled–unlabeled edges)
-#      columns: node_id1,node_id2,label_id1,label_id2,label1_*,label2_*,ibd_sum,ibd_n
-#  (B) LABELED-ONLY: only main nodes
-#      columns: node_id1,node_id2,label_id1,label_id2,ibd_sum,ibd_n
-#  (C) ALL-NODES (NEW): keeps ALL vertices after PRIMARY filtration (shared-nodes + CR>80),
-#      i.e. includes ALL unlabeled vertices (all not-main vertices) and allows unlabeled–unlabeled edges
-#      columns: node_id1,node_id2,label_id1,label_id2,label1_*,label2_*,ibd_sum,ibd_n
+# Self-contained dataset builder for latest GENLINK format with optional PCA.
 #
-# Filtration rules (applied to A, B, C):
-#  - Primary filtration: keep only nodes shared across graph/pred/tree
-#  - CR > 80
-#  - Sibling filtering (ibd_sum > 300):
-#      * if exactly one endpoint is unlabeled -> drop ONLY unlabeled node
-#      * else -> drop BOTH nodes
-#    then assert no remaining ibd_sum > 300 in each dataset
+# Output without PCA:
+# node_id1,node_id2,label_id1,label_id2,ibd_sum,ibd_n
 #
-# Logs class balance for A, B, C using EXACT label_id values stored in each dataset (node counted once).
+# Output with PCA:
+# node_id1,node_id2,label_id1,label_id2,ibd_sum,ibd_n,
+# node1_PC1,...,node1_PC20,node2_PC1,...,node2_PC20
+#
+# Main switches:
+#
+# UNLABELED_MODE = "all"
+#     Keep all CR > 80 nodes and all CR-CR edges.
+#     Allows masked-masked edges.
+#
+# UNLABELED_MODE = "connected_to_labeled"
+#     Keep labeled nodes and masked nodes that have at least one direct edge
+#     to a labeled node.
+#     Final edge set contains only edges touching at least one labeled node.
+#     No masked-masked edges are kept.
+#
+# UNLABELED_MODE = "labeled_only"
+#     Turn off all masked/unlabeled nodes.
+#     Keep only labeled-labeled edges.
+#
+# ANCESTOR_RULE = "3_plus_1"
+#     Label a node if at least 3 of 4 ancestors are from the same target group.
+#     The fourth ancestor can be arbitrary.
+#
+# ANCESTOR_RULE = "4_same"
+#     Label a node only if all 4 of 4 ancestors are from the same target group.
+#
+# ANCESTOR_RULE = "any_unique_labeled_ancestor"
+#     Label a node if at least one ancestor belongs to TARGET_GROUPS and there is
+#     a unique most frequent target population among the 4 ancestors.
+#     Examples:
+#       1,1,1,1 across target groups -> unlabeled
+#       2,2 across target groups     -> unlabeled
+#       2,1,1                        -> labeled as the group with 2
+#       1 target + other non-targets -> labeled as that target group
+#
+# Other filters:
+# - primary filtration: keep only nodes shared across graph / prediction / tree files
+# - keep only nodes with Central-Russia > 80
+# - sibling filtering:
+#     if ibd_sum > 300 and exactly one endpoint is masked -> remove only masked node
+#     otherwise remove both endpoints
+# - optional PCA:
+#     if PCA is enabled, drop all nodes without PCA coordinates
+#     no zero-filled PCA coordinates are used
+# - final global edge-weight threshold:
+#     if MIN_EDGE_IBD_SUM_THRESHOLD is not None, drop edges with ibd_sum < threshold
+# - final stats include min/max edge weight
 
 import os
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 # --------------------
 # Paths
@@ -31,328 +64,958 @@ GRAPH_PATH = "/disk/10tb/home/shmelev/New_CR_2025/df_anonymized.txt"
 PRED_PATH  = "/disk/10tb/home/shmelev/New_CR_2025/samples_2347658_pivot_ancestry_anonymized.csv"
 TREE_PATH  = "/disk/10tb/home/shmelev/New_CR_2025/trees_no_dups.csv"
 
-OUT_SEMI_PATH      = "/disk/10tb/home/shmelev/New_CR_2025/CR_gt80_semi_unlabeled_all_masks_2_classes.csv"
-OUT_LABELED_PATH   = "/disk/10tb/home/shmelev/New_CR_2025/CR_gt80_labeled_only_direct_labels_2_classes.csv"
-OUT_ALLNODES_PATH  = "/disk/10tb/home/shmelev/New_CR_2025/CR_gt80_all_nodes_including_unlabeled_2_classes.csv"
-OUT_NONSHARED_PATH = "/disk/10tb/home/shmelev/New_CR_2025/non_shared_nodes_report.csv"
+# Optional PCA file.
+# Set to None if you do not want PCA columns.
+# PCA_PATH = "/disk/10tb/home/shmelev/New_CR_2025/anonymized_id_PC1-PC20_chiptype.tsv"
+PCA_PATH = None
+
+OUT_DIR = "/disk/10tb/home/shmelev/New_CR_2025"
+OUT_NONSHARED_PATH = os.path.join(OUT_DIR, "non_shared_nodes_report.csv")
 
 # --------------------
-# Constants
+# Settings
 # --------------------
-TARGET_GROUPS = ["Northen Russians", "Southern Russians"] # ["Northen Russians", "Southern Russians", "Belarusians", "Ukranians"]
-LABEL1_COLS = [f"label1_{g}" for g in TARGET_GROUPS]
-LABEL2_COLS = [f"label2_{g}" for g in TARGET_GROUPS]
-UNLABELED_NAME = "Unlabeled"
-SIB_THR = 300.0
+CR_THRESHOLD = 80.0
+SIBLING_IBD_SUM_THRESHOLD = 300.0
 
-GRAPH_FN = os.path.basename(GRAPH_PATH)
-PRED_FN  = os.path.basename(PRED_PATH)
-TREE_FN  = os.path.basename(TREE_PATH)
+# Choices:
+# "all"
+# "connected_to_labeled"
+# "labeled_only"
+UNLABELED_MODE = "labeled_only"
+
+VALID_UNLABELED_MODES = {
+    "all",
+    "connected_to_labeled",
+    "labeled_only",
+}
+
+if UNLABELED_MODE not in VALID_UNLABELED_MODES:
+    raise ValueError(
+        f"UNLABELED_MODE must be one of {sorted(VALID_UNLABELED_MODES)}, "
+        f"got {UNLABELED_MODE!r}"
+    )
+
+# Choices:
+# "3_plus_1"
+# "4_same"
+# "any_unique_labeled_ancestor"
+ANCESTOR_RULE = "any_unique_labeled_ancestor"
+
+VALID_ANCESTOR_RULES = {
+    "3_plus_1",
+    "4_same",
+    "any_unique_labeled_ancestor",
+}
+
+if ANCESTOR_RULE not in VALID_ANCESTOR_RULES:
+    raise ValueError(
+        f"ANCESTOR_RULE must be one of {sorted(VALID_ANCESTOR_RULES)}, "
+        f"got {ANCESTOR_RULE!r}"
+    )
+
+# Global final edge filter.
+# If None, no final minimum edge-weight filter is applied.
+# If set to a number, edges with ibd_sum < MIN_EDGE_IBD_SUM_THRESHOLD are dropped.
+# MIN_EDGE_IBD_SUM_THRESHOLD = None
+MIN_EDGE_IBD_SUM_THRESHOLD = 8.0
+
+TARGET_GROUPS = [
+    "Northen Russians",
+    "Southern Russians",
+    "Belarusians",
+    "Ukranians",
+]
+
+MASK_LABEL = "masked"
+
+PCA_ID_COL = "anonymized_id"
+PCA_DIM = 20
+PCA_COLS = [f"PC{i}" for i in range(1, PCA_DIM + 1)]
+
+PCA_SUFFIX = "with_pca" if PCA_PATH is not None else "no_pca"
+EDGE_THR_SUFFIX = (
+    "no_min_edge_thr"
+    if MIN_EDGE_IBD_SUM_THRESHOLD is None
+    else f"min_edge_{str(MIN_EDGE_IBD_SUM_THRESHOLD).replace('.', 'p')}"
+)
+
+OUT_PATH = os.path.join(
+    OUT_DIR,
+    f"CR_gt80_{UNLABELED_MODE}_{ANCESTOR_RULE}_{PCA_SUFFIX}_{EDGE_THR_SUFFIX}_genlink.csv",
+)
+
 
 # --------------------
 # Helpers
 # --------------------
-def node_class_balance_from_label_cols(df_edges: pd.DataFrame, col1="label_id1", col2="label_id2") -> pd.Series:
-    """Counts each node once using the EXACT label_id values stored in the dataset."""
+def normalize_string_id(series):
+    return series.astype("string").str.strip()
+
+
+def get_unique_edge_nodes(df_edges):
     if df_edges.empty:
-        return pd.Series(dtype="int64")
-    node_class = pd.concat([
-        df_edges[["node_id1", col1]].rename(columns={"node_id1": "node_id", col1: "class"}),
-        df_edges[["node_id2", col2]].rename(columns={"node_id2": "node_id", col2: "class"}),
-    ], ignore_index=True).drop_duplicates(subset="node_id")
-    return node_class["class"].value_counts()
+        return pd.Index([], dtype="string")
 
-def sibling_filter_drop_unlabeled_only_when_mixed(
-    df: pd.DataFrame,
-    thr: float = 300.0,
-    unlabeled_value: str = "Unlabeled",
-    label_col1: str = "label_id1",
-    label_col2: str = "label_id2",
-) -> pd.DataFrame:
-    """
-    For sib edges (ibd_sum > thr):
-      - if exactly one endpoint is unlabeled -> remove ONLY that unlabeled node
-      - else -> remove BOTH nodes
-    Then drop all edges incident to removed nodes.
-    Assert no ibd_sum > thr remains.
-    """
-    if df.empty:
-        return df
-
-    sib = df["ibd_sum"] > thr
-    if not sib.any():
-        return df
-
-    sib_df = df.loc[sib, ["node_id1", "node_id2", label_col1, label_col2]]
-
-    is_u1 = sib_df[label_col1].eq(unlabeled_value)
-    is_u2 = sib_df[label_col2].eq(unlabeled_value)
-    mixed = is_u1 ^ is_u2  # exactly one unlabeled
-
-    unlabeled_to_remove = pd.concat([
-        sib_df.loc[mixed & is_u1, "node_id1"],
-        sib_df.loc[mixed & is_u2, "node_id2"],
-    ], ignore_index=True)
-
-    both_to_remove = pd.concat([
-        sib_df.loc[~mixed, "node_id1"],
-        sib_df.loc[~mixed, "node_id2"],
-    ], ignore_index=True)
-
-    nodes_to_remove = pd.Index(pd.unique(pd.concat([unlabeled_to_remove, both_to_remove], ignore_index=True)))
-
-    df = df[~df["node_id1"].isin(nodes_to_remove) & ~df["node_id2"].isin(nodes_to_remove)].copy()
-
-    assert not (df["ibd_sum"] > thr).any(), f"Sibling edges still present: {(df['ibd_sum'] > thr).sum()} rows > {thr}"
-    return df
-
-def add_masks_and_labels(
-    df_edges: pd.DataFrame,
-    tree_cr: pd.DataFrame,
-    main_nodes: pd.Index,
-    main_majority_group: pd.Series,
-    unlabeled_name: str = "Unlabeled",
-) -> pd.DataFrame:
-    """
-    Adds label1_*/label2_* masks + label_id1/label_id2 (strings).
-    main nodes get one of the 4 TARGET_GROUPS; others -> Unlabeled.
-    """
-    if df_edges.empty:
-        # ensure schema exists even if empty
-        out = df_edges.copy()
-        out["label_id1"] = pd.Series(dtype="string")
-        out["label_id2"] = pd.Series(dtype="string")
-        for c in LABEL1_COLS + LABEL2_COLS:
-            out[c] = pd.Series(dtype="int32")
-        return out
-
-    included_nodes = pd.Index(
-        pd.concat([df_edges["node_id1"], df_edges["node_id2"]], ignore_index=True).dropna().unique(),
+    return pd.Index(
+        pd.concat(
+            [df_edges["node_id1"], df_edges["node_id2"]],
+            ignore_index=True,
+        ).dropna().unique(),
         dtype="string",
     )
 
-    # counts table for masks
-    tree_for_counts = tree_cr[tree_cr["group"].isin(TARGET_GROUPS)].copy()
-    counts_tbl = (
-        tree_for_counts
-        .groupby(["node_tubeid", "group"])
-        .size()
-        .unstack(fill_value=0)
-        .reindex(included_nodes, fill_value=0)
-        .reindex(columns=TARGET_GROUPS, fill_value=0)
+
+def get_edge_weight_min_max(df_edges):
+    if df_edges.empty:
+        return np.nan, np.nan
+
+    return float(df_edges["ibd_sum"].min()), float(df_edges["ibd_sum"].max())
+
+
+def print_stats_table(title, df):
+    print(f"\n{title}")
+
+    if df.empty:
+        print("Empty")
+    else:
+        print(df.to_string(index=False))
+
+
+def make_node_label_table(df_edges, label_col1="label_id1", label_col2="label_id2"):
+    if df_edges.empty:
+        return pd.DataFrame(columns=["node", "label"])
+
+    node_labels = pd.concat(
+        [
+            df_edges[["node_id1", label_col1]].rename(
+                columns={"node_id1": "node", label_col1: "label"}
+            ),
+            df_edges[["node_id2", label_col2]].rename(
+                columns={"node_id2": "node", label_col2: "label"}
+            ),
+        ],
+        ignore_index=True,
     )
 
-    u = df_edges["node_id1"].astype("string")
-    v = df_edges["node_id2"].astype("string")
+    return node_labels.drop_duplicates(subset="node").copy()
 
-    u_counts = counts_tbl.loc[u].to_numpy(dtype=np.int32)
-    v_counts = counts_tbl.loc[v].to_numpy(dtype=np.int32)
 
-    out = df_edges.copy()
+def sibling_filter_drop_masked_only_when_mixed(
+    df_edges,
+    threshold=300.0,
+    mask_label="masked",
+):
+    """
+    For edges with ibd_sum > threshold:
+      - if exactly one endpoint is masked -> remove only the masked endpoint
+      - otherwise -> remove both endpoints
 
-    for j, g in enumerate(TARGET_GROUPS):
-        out[f"label1_{g}"] = u_counts[:, j]
-        out[f"label2_{g}"] = v_counts[:, j]
+    After choosing nodes to remove, drop all edges incident to those nodes.
+    """
+    if df_edges.empty:
+        return df_edges.copy(), pd.Index([], dtype="string")
 
-    # label_id*: exact values stored in dataset
-    node_to_label = pd.Series(unlabeled_name, index=included_nodes, dtype="string")
-    node_to_label.loc[main_nodes] = main_majority_group.reindex(main_nodes).astype("string")
+    sibling_mask = df_edges["ibd_sum"] > threshold
 
-    out["label_id1"] = node_to_label.reindex(u).to_numpy()
-    out["label_id2"] = node_to_label.reindex(v).to_numpy()
+    if not sibling_mask.any():
+        return df_edges.copy(), pd.Index([], dtype="string")
 
-    out = out[["node_id1", "node_id2", "label_id1", "label_id2", *LABEL1_COLS, *LABEL2_COLS, "ibd_sum", "ibd_n"]].copy()
-    return out
+    sibling_edges = df_edges.loc[
+        sibling_mask,
+        ["node_id1", "node_id2", "label_id1", "label_id2", "ibd_sum"],
+    ].copy()
+
+    node1_is_masked = sibling_edges["label_id1"].eq(mask_label)
+    node2_is_masked = sibling_edges["label_id2"].eq(mask_label)
+
+    mixed_labeled_masked = node1_is_masked ^ node2_is_masked
+
+    masked_nodes_to_remove = pd.concat(
+        [
+            sibling_edges.loc[mixed_labeled_masked & node1_is_masked, "node_id1"],
+            sibling_edges.loc[mixed_labeled_masked & node2_is_masked, "node_id2"],
+        ],
+        ignore_index=True,
+    )
+
+    both_endpoint_nodes_to_remove = pd.concat(
+        [
+            sibling_edges.loc[~mixed_labeled_masked, "node_id1"],
+            sibling_edges.loc[~mixed_labeled_masked, "node_id2"],
+        ],
+        ignore_index=True,
+    )
+
+    nodes_to_remove = pd.Index(
+        pd.unique(
+            pd.concat(
+                [masked_nodes_to_remove, both_endpoint_nodes_to_remove],
+                ignore_index=True,
+            )
+        ),
+        dtype="string",
+    )
+
+    filtered_edges = df_edges[
+        ~df_edges["node_id1"].isin(nodes_to_remove)
+        & ~df_edges["node_id2"].isin(nodes_to_remove)
+    ].copy()
+
+    remaining_sibling_edges = int((filtered_edges["ibd_sum"] > threshold).sum())
+
+    if remaining_sibling_edges != 0:
+        raise RuntimeError(
+            f"Sibling filtering failed: {remaining_sibling_edges} edges still have "
+            f"ibd_sum > {threshold}"
+        )
+
+    return filtered_edges, nodes_to_remove
+
 
 # --------------------
-# Load
+# Stage A: Load
 # --------------------
 print("\n[Stage A] Loading files...")
-pd_graph = pd.read_csv(GRAPH_PATH, dtype={"node_id1": "string", "node_id2": "string"})
-predicted_ancestry = pd.read_csv(PRED_PATH, dtype={"node_tubeid": "string"})
-ancestry_information = pd.read_csv(TREE_PATH, dtype={"node_tubeid": "string"})
+
+pd_graph = pd.read_csv(
+    GRAPH_PATH,
+    dtype={
+        "node_id1": "string",
+        "node_id2": "string",
+    },
+)
+
+predicted_ancestry = pd.read_csv(
+    PRED_PATH,
+    dtype={
+        "node_tubeid": "string",
+    },
+)
+
+ancestry_information = pd.read_csv(
+    TREE_PATH,
+    dtype={
+        "node_tubeid": "string",
+    },
+)
+
+pd_graph["node_id1"] = normalize_string_id(pd_graph["node_id1"])
+pd_graph["node_id2"] = normalize_string_id(pd_graph["node_id2"])
+predicted_ancestry["node_tubeid"] = normalize_string_id(predicted_ancestry["node_tubeid"])
+ancestry_information["node_tubeid"] = normalize_string_id(ancestry_information["node_tubeid"])
+
+if "group" in ancestry_information.columns:
+    ancestry_information["group"] = ancestry_information["group"].astype("string").str.strip()
 
 required_graph_cols = {"node_id1", "node_id2", "ibd_sum", "ibd_n"}
-required_pred_cols  = {"node_tubeid", "Central-Russia"}
-required_tree_cols  = {"node_tubeid", "group"}
-missing = (required_graph_cols - set(pd_graph.columns)) | (required_pred_cols - set(predicted_ancestry.columns)) | (required_tree_cols - set(ancestry_information.columns))
+required_pred_cols = {"node_tubeid", "Central-Russia"}
+required_tree_cols = {"node_tubeid", "group"}
+
+missing = (
+    (required_graph_cols - set(pd_graph.columns))
+    | (required_pred_cols - set(predicted_ancestry.columns))
+    | (required_tree_cols - set(ancestry_information.columns))
+)
+
 if missing:
     raise ValueError(f"Missing required columns: {sorted(missing)}")
 
-print("pd_graph:", pd_graph.shape, "| predicted_ancestry:", predicted_ancestry.shape, "| ancestry_information:", ancestry_information.shape)
+pd_graph["ibd_sum"] = pd.to_numeric(pd_graph["ibd_sum"], errors="raise")
+pd_graph["ibd_n"] = pd.to_numeric(pd_graph["ibd_n"], errors="raise")
+
+predicted_ancestry["Central-Russia"] = pd.to_numeric(
+    predicted_ancestry["Central-Russia"],
+    errors="coerce",
+)
+
+print(
+    "pd_graph:", pd_graph.shape,
+    "| predicted_ancestry:", predicted_ancestry.shape,
+    "| ancestry_information:", ancestry_information.shape,
+)
+
+print("UNLABELED_MODE:", UNLABELED_MODE)
+print("ANCESTOR_RULE:", ANCESTOR_RULE)
+print("PCA enabled:", PCA_PATH is not None)
+print("MIN_EDGE_IBD_SUM_THRESHOLD:", MIN_EDGE_IBD_SUM_THRESHOLD)
 
 # --------------------
-# Stage 0.1) Non-shared nodes report (nodes NOT shared across all three files)
+# Stage 0.1: Non-shared nodes report
 # --------------------
 print("\n[Stage 0.1] Build non-shared nodes report...")
 
 graph_nodes = pd.Index(
-    pd.concat([pd_graph["node_id1"], pd_graph["node_id2"]], ignore_index=True).dropna().unique(),
+    pd.concat(
+        [pd_graph["node_id1"], pd_graph["node_id2"]],
+        ignore_index=True,
+    ).dropna().unique(),
     dtype="string",
 )
-pred_nodes  = pd.Index(predicted_ancestry["node_tubeid"].dropna().unique(), dtype="string")
-tree_nodes  = pd.Index(ancestry_information["node_tubeid"].dropna().unique(), dtype="string")
+
+pred_nodes = pd.Index(
+    predicted_ancestry["node_tubeid"].dropna().unique(),
+    dtype="string",
+)
+
+tree_nodes = pd.Index(
+    ancestry_information["node_tubeid"].dropna().unique(),
+    dtype="string",
+)
 
 common_nodes = graph_nodes.intersection(pred_nodes).intersection(tree_nodes)
 all_nodes_union = graph_nodes.union(pred_nodes).union(tree_nodes)
-
 nonshared_nodes = all_nodes_union.difference(common_nodes)
-print("nonshared_nodes:", len(nonshared_nodes))
 
-nonshared_df = pd.DataFrame({
-    "node_id": nonshared_nodes.astype("string"),
-    GRAPH_FN: np.where(nonshared_nodes.isin(graph_nodes), "yes", "no"),
-    PRED_FN:  np.where(nonshared_nodes.isin(pred_nodes),  "yes", "no"),
-    TREE_FN:  np.where(nonshared_nodes.isin(tree_nodes),  "yes", "no"),
-})
+graph_filename = os.path.basename(GRAPH_PATH)
+pred_filename = os.path.basename(PRED_PATH)
+tree_filename = os.path.basename(TREE_PATH)
+
+nonshared_df = pd.DataFrame(
+    {
+        "node_id": nonshared_nodes.astype("string"),
+        graph_filename: np.where(nonshared_nodes.isin(graph_nodes), "yes", "no"),
+        pred_filename: np.where(nonshared_nodes.isin(pred_nodes), "yes", "no"),
+        tree_filename: np.where(nonshared_nodes.isin(tree_nodes), "yes", "no"),
+    }
+)
+
 nonshared_df.to_csv(OUT_NONSHARED_PATH, index=False)
+
+print("Common nodes:", len(common_nodes))
+print("Non-shared nodes:", len(nonshared_nodes))
 print("Saved non-shared report:", OUT_NONSHARED_PATH)
 
+# --------------------
+# Stage 0: Primary filtration
+# --------------------
+print("\n[Stage 0] Primary filtration: keep only shared graph / pred / tree nodes...")
+
+pd_graph_common = pd_graph[
+    pd_graph["node_id1"].isin(common_nodes)
+    & pd_graph["node_id2"].isin(common_nodes)
+].copy()
+
+pred_common = predicted_ancestry[
+    predicted_ancestry["node_tubeid"].isin(common_nodes)
+].copy()
+
+tree_common = ancestry_information[
+    ancestry_information["node_tubeid"].isin(common_nodes)
+].copy()
+
+print(
+    "pd_graph_common:", pd_graph_common.shape,
+    "| pred_common:", pred_common.shape,
+    "| tree_common:", tree_common.shape,
+)
 
 # --------------------
-# Stage 0) Primary filtration: keep only nodes common to ALL three sources
+# Stage 1: Central-Russia > 80
 # --------------------
-print("\n[Stage 0] Primary filtration: keep only shared nodes in graph/pred/tree...")
+print(f"\n[Stage 1] Filter Central-Russia > {CR_THRESHOLD}...")
 
-pd_graph_common = pd_graph[pd_graph["node_id1"].isin(common_nodes) & pd_graph["node_id2"].isin(common_nodes)].copy()
-pred_common = predicted_ancestry[predicted_ancestry["node_tubeid"].isin(common_nodes)].copy()
-tree_common = ancestry_information[ancestry_information["node_tubeid"].isin(common_nodes)].copy()
-print("pd_graph_common:", pd_graph_common.shape, "| pred_common:", pred_common.shape, "| tree_common:", tree_common.shape)
+cr_nodes = pd.Index(
+    pred_common.loc[
+        pred_common["Central-Russia"] > CR_THRESHOLD,
+        "node_tubeid",
+    ].dropna().unique(),
+    dtype="string",
+)
 
-# --------------------
-# Stage 1) CR > 80
-# --------------------
-print("\n[Stage 1] Filter Central-Russia > 80...")
-cr_nodes = pd.Index(pred_common.loc[pred_common["Central-Russia"] > 80.0, "node_tubeid"].unique(), dtype="string")
+pd_graph_cr = pd_graph_common[
+    pd_graph_common["node_id1"].isin(cr_nodes)
+    & pd_graph_common["node_id2"].isin(cr_nodes)
+].copy()
+
+tree_cr = tree_common[
+    tree_common["node_tubeid"].isin(cr_nodes)
+].copy()
+
 print("cr_nodes:", len(cr_nodes))
-
-pd_graph_cr = pd_graph_common[pd_graph_common["node_id1"].isin(cr_nodes) & pd_graph_common["node_id2"].isin(cr_nodes)].copy()
-tree_cr = tree_common[tree_common["node_tubeid"].isin(cr_nodes)].copy()
 print("pd_graph_cr:", pd_graph_cr.shape, "| tree_cr:", tree_cr.shape)
 
-tree_cr["group"] = tree_cr["group"].astype("string")
-
 # --------------------
-# Stage 2) Main nodes + majority class
+# Stage 2: Select labeled nodes by ancestor rule
 # --------------------
-print("\n[Stage 2] Select main nodes + majority class (fast groupby)...")
+print(f"\n[Stage 2] Select labeled nodes by ancestor rule: {ANCESTOR_RULE}...")
 
-cnt = (
+counts_by_group = (
     tree_cr
     .groupby(["node_tubeid", "group"])
     .size()
     .unstack(fill_value=0)
 )
 
-total_anc = cnt.sum(axis=1)
-distinct_groups = (cnt > 0).sum(axis=1)
-maj_group = cnt.idxmax(axis=1)
-maj_cnt = cnt.max(axis=1)
+if counts_by_group.empty:
+    main_majority_group = pd.Series(dtype="string")
+else:
+    total_ancestors = counts_by_group.sum(axis=1)
 
-main_mask = (total_anc == 4) & (distinct_groups <= 2) & (maj_cnt >= 3) & (maj_group != "Unknown")
-main_majority_group = maj_group[main_mask].astype("string")
+    if ANCESTOR_RULE == "3_plus_1":
+        majority_group = counts_by_group.idxmax(axis=1)
+        majority_count = counts_by_group.max(axis=1)
 
-# keep ONLY nodes whose majority is one of the 4 target classes
-main_majority_group = main_majority_group[main_majority_group.isin(TARGET_GROUPS)]
+        main_mask = (
+            (total_ancestors == 4)
+            & (majority_count >= 3)
+            & (majority_group.isin(TARGET_GROUPS))
+        )
+
+        main_majority_group = majority_group[main_mask].astype("string")
+
+    elif ANCESTOR_RULE == "4_same":
+        majority_group = counts_by_group.idxmax(axis=1)
+        majority_count = counts_by_group.max(axis=1)
+
+        main_mask = (
+            (total_ancestors == 4)
+            & (majority_count == 4)
+            & (majority_group.isin(TARGET_GROUPS))
+        )
+
+        main_majority_group = majority_group[main_mask].astype("string")
+
+    elif ANCESTOR_RULE == "any_unique_labeled_ancestor":
+        target_counts = counts_by_group.reindex(columns=TARGET_GROUPS, fill_value=0)
+
+        target_max_count = target_counts.max(axis=1)
+        target_best_group = target_counts.idxmax(axis=1)
+
+        target_num_groups_with_max = target_counts.eq(target_max_count, axis=0).sum(axis=1)
+
+        main_mask = (
+            (total_ancestors == 4)
+            & (target_max_count >= 1)
+            & (target_num_groups_with_max == 1)
+        )
+
+        main_majority_group = target_best_group[main_mask].astype("string")
+
+    else:
+        raise ValueError(f"Unknown ANCESTOR_RULE: {ANCESTOR_RULE}")
+
 main_nodes = pd.Index(main_majority_group.index, dtype="string")
 
-print("Main nodes:", len(main_nodes))
+print("Labeled nodes selected before graph-mode filtering:", len(main_nodes))
+print("Selected labeled class balance:")
+print(main_majority_group.value_counts())
 
 # --------------------
-# Stage 3A) SEMI dataset edges (touches main only)
+# Stage 3: Apply unlabeled-node mode
 # --------------------
-print("\n[Stage 3A] Build SEMI dataset edge set (touches main only; no unlabeled-unlabeled edges)...")
+print("\n[Stage 3] Apply unlabeled-node mode...")
 
-pd_graph_semi_base = pd_graph_cr[
-    pd_graph_cr["node_id1"].isin(main_nodes) | pd_graph_cr["node_id2"].isin(main_nodes)
+if UNLABELED_MODE == "all":
+    pd_graph_final = pd_graph_cr[
+        ["node_id1", "node_id2", "ibd_sum", "ibd_n"]
+    ].copy()
+
+elif UNLABELED_MODE == "connected_to_labeled":
+    pd_graph_final = pd_graph_cr[
+        pd_graph_cr["node_id1"].isin(main_nodes)
+        | pd_graph_cr["node_id2"].isin(main_nodes)
+    ][["node_id1", "node_id2", "ibd_sum", "ibd_n"]].copy()
+
+elif UNLABELED_MODE == "labeled_only":
+    pd_graph_final = pd_graph_cr[
+        pd_graph_cr["node_id1"].isin(main_nodes)
+        & pd_graph_cr["node_id2"].isin(main_nodes)
+    ][["node_id1", "node_id2", "ibd_sum", "ibd_n"]].copy()
+
+else:
+    raise ValueError(f"Unknown UNLABELED_MODE: {UNLABELED_MODE}")
+
+included_nodes_before_sibling_filter = get_unique_edge_nodes(pd_graph_final)
+edge_min_before_sibling, edge_max_before_sibling = get_edge_weight_min_max(pd_graph_final)
+
+included_labeled_before_sibling = included_nodes_before_sibling_filter.intersection(main_nodes)
+included_masked_before_sibling = included_nodes_before_sibling_filter.difference(main_nodes)
+
+print("Edges after unlabeled mode before sibling filter:", len(pd_graph_final))
+print("Included nodes before sibling filter:", len(included_nodes_before_sibling_filter))
+print("Included labeled nodes before sibling filter:", len(included_labeled_before_sibling))
+print("Included masked nodes before sibling filter:", len(included_masked_before_sibling))
+print("Min ibd_sum before sibling filter:", edge_min_before_sibling)
+print("Max ibd_sum before sibling filter:", edge_max_before_sibling)
+print(
+    "CR > 80 nodes not written after unlabeled mode:",
+    len(cr_nodes.difference(included_nodes_before_sibling_filter)),
+)
+
+if UNLABELED_MODE == "connected_to_labeled":
+    touches_labeled = (
+        pd_graph_final["node_id1"].isin(main_nodes)
+        | pd_graph_final["node_id2"].isin(main_nodes)
+    )
+
+    if not bool(touches_labeled.all()):
+        bad = pd_graph_final.loc[
+            ~touches_labeled,
+            ["node_id1", "node_id2"],
+        ].head(10)
+
+        raise RuntimeError(
+            "connected_to_labeled mode produced edges not touching labeled nodes:\n"
+            f"{bad}"
+        )
+
+# --------------------
+# Stage 4: Add GENLINK labels
+# --------------------
+print("\n[Stage 4] Add label_id1 and label_id2...")
+
+node_label = {
+    node: MASK_LABEL
+    for node in included_nodes_before_sibling_filter
+}
+
+for node, label in main_majority_group.items():
+    if node in node_label:
+        node_label[node] = str(label)
+
+pd_graph_final["label_id1"] = pd_graph_final["node_id1"].map(node_label)
+pd_graph_final["label_id2"] = pd_graph_final["node_id2"].map(node_label)
+
+if pd_graph_final["label_id1"].isna().any() or pd_graph_final["label_id2"].isna().any():
+    bad = pd_graph_final[
+        pd_graph_final["label_id1"].isna()
+        | pd_graph_final["label_id2"].isna()
+    ][["node_id1", "node_id2", "label_id1", "label_id2"]].head(10)
+
+    raise RuntimeError(f"Some endpoint labels were not assigned:\n{bad}")
+
+pd_graph_final = pd_graph_final[
+    ["node_id1", "node_id2", "label_id1", "label_id2", "ibd_sum", "ibd_n"]
 ].copy()
 
-# Safety check: every edge must touch a main node
-touches_main_mask = pd_graph_semi_base["node_id1"].isin(main_nodes) | pd_graph_semi_base["node_id2"].isin(main_nodes)
-if not bool(touches_main_mask.all()):
-    bad = pd_graph_semi_base.loc[~touches_main_mask, ["node_id1", "node_id2"]].head(10)
-    raise RuntimeError(f"Found edges not touching main nodes (showing up to 10):\n{bad}")
-
-print("pd_graph_semi_base:", pd_graph_semi_base.shape)
+print("Label balance before sibling filter:")
+node_labels_before = make_node_label_table(pd_graph_final)
+print(node_labels_before["label"].value_counts())
 
 # --------------------
-# Stage 3B) LABELED-ONLY dataset edges (both endpoints main)
+# Stage 5: Sibling filtering
 # --------------------
-print("\n[Stage 3B] Build LABELED-ONLY dataset edge set (both endpoints main)...")
+print(f"\n[Stage 5] Sibling filtering: ibd_sum > {SIBLING_IBD_SUM_THRESHOLD}...")
 
-pd_graph_labeled = pd_graph_cr[
-    pd_graph_cr["node_id1"].isin(main_nodes) & pd_graph_cr["node_id2"].isin(main_nodes)
-].copy()
+edges_before_sibling_filter = len(pd_graph_final)
+nodes_before_sibling_filter = get_unique_edge_nodes(pd_graph_final)
 
-pd_graph_labeled["label_id1"] = main_majority_group.reindex(pd_graph_labeled["node_id1"].astype("string")).to_numpy()
-pd_graph_labeled["label_id2"] = main_majority_group.reindex(pd_graph_labeled["node_id2"].astype("string")).to_numpy()
-pd_graph_labeled = pd_graph_labeled[["node_id1", "node_id2", "label_id1", "label_id2", "ibd_sum", "ibd_n"]].copy()
-
-print("pd_graph_labeled:", pd_graph_labeled.shape)
-
-# --------------------
-# Stage 3C) ALL-NODES dataset edges (NEW): keep ALL nodes/edges after primary filtration + CR>80
-# --------------------
-print("\n[Stage 3C] Build ALL-NODES dataset edge set (includes all unlabeled vertices; allows unlabeled-unlabeled edges)...")
-
-pd_graph_all_base = pd_graph_cr.copy()
-print("pd_graph_all_base:", pd_graph_all_base.shape)
-
-# --------------------
-# Stage 4) Add masks + label_id* to SEMI and ALL-NODES datasets
-# --------------------
-print("\n[Stage 4] Add masks + label_id* to SEMI and ALL-NODES datasets...")
-
-pd_graph_semi = add_masks_and_labels(pd_graph_semi_base, tree_cr, main_nodes, main_majority_group, unlabeled_name=UNLABELED_NAME)
-pd_graph_all  = add_masks_and_labels(pd_graph_all_base,  tree_cr, main_nodes, main_majority_group, unlabeled_name=UNLABELED_NAME)
-
-print("pd_graph_semi:", pd_graph_semi.shape)
-print("pd_graph_all :", pd_graph_all.shape)
-
-# --------------------
-# Stage 5) Sibling filtering for A, B, C + assert
-# --------------------
-print("\n[Stage 5] Sibling filtering (ibd_sum > 300) for SEMI, LABELED, ALL-NODES + assert...")
-
-pd_graph_semi = sibling_filter_drop_unlabeled_only_when_mixed(
-    pd_graph_semi, thr=SIB_THR, unlabeled_value=UNLABELED_NAME, label_col1="label_id1", label_col2="label_id2"
-)
-pd_graph_labeled = sibling_filter_drop_unlabeled_only_when_mixed(
-    pd_graph_labeled, thr=SIB_THR, unlabeled_value=UNLABELED_NAME, label_col1="label_id1", label_col2="label_id2"
-)
-pd_graph_all = sibling_filter_drop_unlabeled_only_when_mixed(
-    pd_graph_all, thr=SIB_THR, unlabeled_value=UNLABELED_NAME, label_col1="label_id1", label_col2="label_id2"
+pd_graph_final, sibling_removed_nodes = sibling_filter_drop_masked_only_when_mixed(
+    pd_graph_final,
+    threshold=SIBLING_IBD_SUM_THRESHOLD,
+    mask_label=MASK_LABEL,
 )
 
-print("After sibling filter | semi:", pd_graph_semi.shape, "| labeled:", pd_graph_labeled.shape, "| all:", pd_graph_all.shape)
+edges_after_sibling_filter = len(pd_graph_final)
+nodes_after_sibling_filter = get_unique_edge_nodes(pd_graph_final)
+edge_min_after_sibling, edge_max_after_sibling = get_edge_weight_min_max(pd_graph_final)
+
+print("Edges before sibling filter:", edges_before_sibling_filter)
+print("Edges after sibling filter:", edges_after_sibling_filter)
+print("Removed edges by sibling filter:", edges_before_sibling_filter - edges_after_sibling_filter)
+print("Nodes before sibling filter:", len(nodes_before_sibling_filter))
+print("Nodes after sibling filter:", len(nodes_after_sibling_filter))
+print("Removed nodes by sibling filter:", len(sibling_removed_nodes))
+print("Min ibd_sum after sibling filter:", edge_min_after_sibling)
+print("Max ibd_sum after sibling filter:", edge_max_after_sibling)
+
+if len(sibling_removed_nodes) > 0:
+    print("First sibling-removed nodes:", sibling_removed_nodes[:10].tolist())
 
 # --------------------
-# Stage 6) Class balance for A, B, C (exact label_id values; node counted once)
+# Stage 6: Optional PCA coordinates
 # --------------------
-print("\n[Stage 6] Class balance (exact label_id values; each node counted once)")
+pca_nodes = pd.Index([], dtype="string")
+pca_was_used = PCA_PATH is not None
+pca_removed_edges = 0
+pca_removed_nodes = pd.Index([], dtype="string")
 
-semi_balance   = node_class_balance_from_label_cols(pd_graph_semi,   "label_id1", "label_id2")
-labeled_balance= node_class_balance_from_label_cols(pd_graph_labeled,"label_id1", "label_id2")
-all_balance    = node_class_balance_from_label_cols(pd_graph_all,    "label_id1", "label_id2")
+if PCA_PATH is not None:
+    print("\n[Stage 6] Add PCA coordinates and drop nodes without PCA...")
 
-print("\n[Semi-unlabeled] class balance (includes 'Unlabeled'):")
-print(semi_balance)
+    pca_df = pd.read_csv(
+        PCA_PATH,
+        dtype={PCA_ID_COL: "string"},
+        sep=None,
+        engine="python",
+    )
 
-print("\n[Labeled-only] class balance:")
-print(labeled_balance)
+    if PCA_ID_COL not in pca_df.columns:
+        raise ValueError(f"PCA file must contain ID column: {PCA_ID_COL}")
 
-print("\n[All-nodes] class balance (includes 'Unlabeled'):")
-print(all_balance)
+    missing_pca_cols = [c for c in PCA_COLS if c not in pca_df.columns]
+
+    if missing_pca_cols:
+        raise ValueError(f"PCA file is missing columns: {missing_pca_cols}")
+
+    pca_df[PCA_ID_COL] = normalize_string_id(pca_df[PCA_ID_COL])
+
+    pca_df = pca_df[[PCA_ID_COL, *PCA_COLS]].copy()
+    pca_df = pca_df.drop_duplicates(subset=PCA_ID_COL, keep="first")
+
+    for c in PCA_COLS:
+        pca_df[c] = pd.to_numeric(pca_df[c], errors="raise").astype(np.float32)
+
+    pca_nodes = pd.Index(
+        pca_df[PCA_ID_COL].dropna().unique(),
+        dtype="string",
+    )
+
+    nodes_before_pca_filter = get_unique_edge_nodes(pd_graph_final)
+    edges_before_pca_filter = len(pd_graph_final)
+
+    pca_removed_nodes = nodes_before_pca_filter.difference(pca_nodes)
+
+    print("Nodes before PCA filter:", len(nodes_before_pca_filter))
+    print("Nodes with PCA before PCA filter:", len(nodes_before_pca_filter.intersection(pca_nodes)))
+    print("Nodes without PCA, will be dropped:", len(pca_removed_nodes))
+
+    if len(pca_removed_nodes) > 0:
+        print("First nodes without PCA:", pca_removed_nodes[:10].tolist())
+
+    pd_graph_final = pd_graph_final[
+        pd_graph_final["node_id1"].isin(pca_nodes)
+        & pd_graph_final["node_id2"].isin(pca_nodes)
+    ].copy()
+
+    edges_after_pca_filter = len(pd_graph_final)
+    nodes_after_pca_filter = get_unique_edge_nodes(pd_graph_final)
+
+    pca_removed_edges = edges_before_pca_filter - edges_after_pca_filter
+    pca_removed_nodes_actual = nodes_before_pca_filter.difference(nodes_after_pca_filter)
+
+    print("Edges before PCA filter:", edges_before_pca_filter)
+    print("Edges after PCA filter:", edges_after_pca_filter)
+    print("Removed edges by PCA filter:", pca_removed_edges)
+    print("Nodes after PCA filter:", len(nodes_after_pca_filter))
+    print("Removed nodes by PCA filter:", len(pca_removed_nodes_actual))
+
+    node1_pca_cols = [f"node1_PC{i}" for i in range(1, PCA_DIM + 1)]
+    node2_pca_cols = [f"node2_PC{i}" for i in range(1, PCA_DIM + 1)]
+
+    pca_node1 = pca_df.rename(
+        columns={
+            PCA_ID_COL: "node_id1",
+            **{f"PC{i}": f"node1_PC{i}" for i in range(1, PCA_DIM + 1)},
+        }
+    )
+
+    pca_node2 = pca_df.rename(
+        columns={
+            PCA_ID_COL: "node_id2",
+            **{f"PC{i}": f"node2_PC{i}" for i in range(1, PCA_DIM + 1)},
+        }
+    )
+
+    pd_graph_final = pd_graph_final.merge(
+        pca_node1,
+        on="node_id1",
+        how="left",
+    )
+
+    pd_graph_final = pd_graph_final.merge(
+        pca_node2,
+        on="node_id2",
+        how="left",
+    )
+
+    pca_value_cols = node1_pca_cols + node2_pca_cols
+
+    if pd_graph_final[pca_value_cols].isna().any().any():
+        bad = pd_graph_final[
+            pd_graph_final[pca_value_cols].isna().any(axis=1)
+        ][["node_id1", "node_id2"]].head(10)
+
+        raise RuntimeError(
+            "PCA filtering failed: some remaining edges still have missing PCA values.\n"
+            f"{bad}"
+        )
+
+    for c in pca_value_cols:
+        pd_graph_final[c] = pd_graph_final[c].astype(np.float32)
+
+    pd_graph_final = pd_graph_final[
+        [
+            "node_id1",
+            "node_id2",
+            "label_id1",
+            "label_id2",
+            "ibd_sum",
+            "ibd_n",
+            *node1_pca_cols,
+            *node2_pca_cols,
+        ]
+    ].copy()
+
+    print("Added PCA columns:", len(node1_pca_cols) + len(node2_pca_cols))
+
+else:
+    print("\n[Stage 6] PCA_PATH is None, saving without PCA columns...")
 
 # --------------------
-# Stage 7) Save all outputs
+# Stage 7: Final global edge-weight threshold before saving
 # --------------------
-print("\n[Stage 7] Saving datasets...")
-pd_graph_semi.to_csv(OUT_SEMI_PATH, index=False)
-pd_graph_labeled.to_csv(OUT_LABELED_PATH, index=False)
-pd_graph_all.to_csv(OUT_ALLNODES_PATH, index=False)
+print("\n[Stage 7] Final global edge-weight threshold before saving...")
 
-print("Saved non-shared report:", OUT_NONSHARED_PATH, "| rows:", len(nonshared_df))
-print("Saved semi:", OUT_SEMI_PATH, "| edges:", len(pd_graph_semi))
-print("Saved labeled:", OUT_LABELED_PATH, "| edges:", len(pd_graph_labeled))
-print("Saved all-nodes:", OUT_ALLNODES_PATH, "| edges:", len(pd_graph_all))
+edges_before_min_edge_filter = len(pd_graph_final)
+nodes_before_min_edge_filter = get_unique_edge_nodes(pd_graph_final)
+edge_min_before_min_edge_filter, edge_max_before_min_edge_filter = get_edge_weight_min_max(pd_graph_final)
+
+if MIN_EDGE_IBD_SUM_THRESHOLD is not None:
+    print(f"Applying final edge filter: keep ibd_sum >= {MIN_EDGE_IBD_SUM_THRESHOLD}")
+
+    pd_graph_final = pd_graph_final[
+        pd_graph_final["ibd_sum"] >= MIN_EDGE_IBD_SUM_THRESHOLD
+    ].copy()
+else:
+    print("MIN_EDGE_IBD_SUM_THRESHOLD is None, no final minimum edge-weight filter applied.")
+
+edges_after_min_edge_filter = len(pd_graph_final)
+nodes_after_min_edge_filter = get_unique_edge_nodes(pd_graph_final)
+edge_min_final, edge_max_final = get_edge_weight_min_max(pd_graph_final)
+
+threshold_removed_edges = edges_before_min_edge_filter - edges_after_min_edge_filter
+threshold_removed_nodes = nodes_before_min_edge_filter.difference(nodes_after_min_edge_filter)
+
+print("Edges before final edge-weight threshold:", edges_before_min_edge_filter)
+print("Edges after final edge-weight threshold:", edges_after_min_edge_filter)
+print("Removed edges by final edge-weight threshold:", threshold_removed_edges)
+print("Nodes before final edge-weight threshold:", len(nodes_before_min_edge_filter))
+print("Nodes after final edge-weight threshold:", len(nodes_after_min_edge_filter))
+print("Removed nodes by final edge-weight threshold:", len(threshold_removed_nodes))
+print("Min ibd_sum before final edge-weight threshold:", edge_min_before_min_edge_filter)
+print("Max ibd_sum before final edge-weight threshold:", edge_max_before_min_edge_filter)
+print("Final min ibd_sum:", edge_min_final)
+print("Final max ibd_sum:", edge_max_final)
+
+if len(threshold_removed_nodes) > 0:
+    print("First nodes removed by final edge-weight threshold:", threshold_removed_nodes[:10].tolist())
+
+included_nodes = nodes_after_min_edge_filter
+
+node_labels_final = make_node_label_table(pd_graph_final)
+node_summary = node_labels_final.rename(columns={"node": "node", "label": "label"}).copy()
+
+node_summary["node_type"] = np.where(
+    node_summary["label"] == MASK_LABEL,
+    "masked",
+    "labeled",
+)
+
+if pca_was_used:
+    node_summary["has_pca"] = node_summary["node"].isin(pca_nodes)
+else:
+    node_summary["has_pca"] = False
+
+# --------------------
+# Stage 8: Save
+# --------------------
+print("\n[Stage 8] Saving...")
+
+pd_graph_final.to_csv(OUT_PATH, index=False)
+
+print("Saved:", OUT_PATH)
+
+# --------------------
+# Stage 9: Final stats
+# --------------------
+print("\n[Stage 9] Final dataset stats...")
+
+total_nodes = len(node_summary)
+labeled_nodes = int((node_summary["node_type"] == "labeled").sum())
+masked_nodes = int((node_summary["node_type"] == "masked").sum())
+
+nodes_with_pca = int(node_summary["has_pca"].sum())
+nodes_without_pca = int((~node_summary["has_pca"]).sum())
+
+final_label_balance = node_summary["label"].value_counts()
+
+overall_stats = pd.DataFrame(
+    [
+        {
+            "metric": "unlabeled_mode",
+            "value": UNLABELED_MODE,
+            "proportion": np.nan,
+        },
+        {
+            "metric": "ancestor_rule",
+            "value": ANCESTOR_RULE,
+            "proportion": np.nan,
+        },
+        {
+            "metric": "pca_enabled",
+            "value": bool(pca_was_used),
+            "proportion": np.nan,
+        },
+        {
+            "metric": "final_edges",
+            "value": int(pd_graph_final.shape[0]),
+            "proportion": np.nan,
+        },
+        {
+            "metric": "final_columns",
+            "value": int(pd_graph_final.shape[1]),
+            "proportion": np.nan,
+        },
+        {
+            "metric": "final_min_ibd_sum",
+            "value": edge_min_final,
+            "proportion": np.nan,
+        },
+        {
+            "metric": "final_max_ibd_sum",
+            "value": edge_max_final,
+            "proportion": np.nan,
+        },
+        {
+            "metric": "total_nodes",
+            "value": total_nodes,
+            "proportion": 1.0,
+        },
+        {
+            "metric": "labeled_nodes",
+            "value": labeled_nodes,
+            "proportion": labeled_nodes / total_nodes if total_nodes else 0.0,
+        },
+        {
+            "metric": "masked_nodes",
+            "value": masked_nodes,
+            "proportion": masked_nodes / total_nodes if total_nodes else 0.0,
+        },
+        {
+            "metric": "nodes_with_pca",
+            "value": nodes_with_pca,
+            "proportion": nodes_with_pca / total_nodes if total_nodes else 0.0,
+        },
+        {
+            "metric": "nodes_without_pca",
+            "value": nodes_without_pca,
+            "proportion": nodes_without_pca / total_nodes if total_nodes else 0.0,
+        },
+        {
+            "metric": "sibling_removed_nodes",
+            "value": int(len(sibling_removed_nodes)),
+            "proportion": len(sibling_removed_nodes) / len(nodes_before_sibling_filter)
+            if len(nodes_before_sibling_filter)
+            else 0.0,
+        },
+        {
+            "metric": "pca_removed_edges",
+            "value": int(pca_removed_edges),
+            "proportion": pca_removed_edges / edges_after_sibling_filter
+            if edges_after_sibling_filter
+            else 0.0,
+        },
+        {
+            "metric": "pca_removed_nodes",
+            "value": int(len(pca_removed_nodes)),
+            "proportion": len(pca_removed_nodes) / len(nodes_after_sibling_filter)
+            if len(nodes_after_sibling_filter)
+            else 0.0,
+        },
+        {
+            "metric": "final_edge_threshold",
+            "value": MIN_EDGE_IBD_SUM_THRESHOLD if MIN_EDGE_IBD_SUM_THRESHOLD is not None else np.nan,
+            "proportion": np.nan,
+        },
+        {
+            "metric": "final_edge_threshold_removed_edges",
+            "value": int(threshold_removed_edges),
+            "proportion": threshold_removed_edges / edges_before_min_edge_filter
+            if edges_before_min_edge_filter
+            else 0.0,
+        },
+        {
+            "metric": "final_edge_threshold_removed_nodes",
+            "value": int(len(threshold_removed_nodes)),
+            "proportion": len(threshold_removed_nodes) / len(nodes_before_min_edge_filter)
+            if len(nodes_before_min_edge_filter)
+            else 0.0,
+        },
+        {
+            "metric": "cr_nodes_without_cr_edges_or_excluded_by_mode",
+            "value": int(len(cr_nodes.difference(included_nodes))),
+            "proportion": len(cr_nodes.difference(included_nodes)) / len(cr_nodes)
+            if len(cr_nodes)
+            else 0.0,
+        },
+    ]
+)
+
+print_stats_table("Overall stats", overall_stats)
+
+print("\nFinal label balance:")
+print(final_label_balance)
+
+stats_by_node_type = (
+    node_summary
+    .groupby("node_type", dropna=False)
+    .agg(
+        total_nodes=("node", "size"),
+        nodes_with_pca=("has_pca", "sum"),
+    )
+    .reset_index()
+)
+
+stats_by_node_type["nodes_without_pca"] = (
+    stats_by_node_type["total_nodes"] - stats_by_node_type["nodes_with_pca"]
+)
+
+stats_by_node_type["category_proportion_of_all_nodes"] = (
+    stats_by_node_type["total_nodes"] / total_nodes if total_nodes else 0.0
+)
+
+stats_by_node_type["with_pca_proportion_inside_category"] = np.where(
+    stats_by_node_type["total_nodes"] > 0,
+    stats_by_node_type["nodes_with_pca"] / stats_by_node_type["total_nodes"],
+    0.0,
+)
+
+stats_by_node_type["without_pca_proportion_inside_category"] = np.where(
+    stats_by_node_type["total_nodes"] > 0,
+    stats_by_node_type["nodes_without_pca"] / stats_by_node_type["total_nodes"],
+    0.0,
+)
+
+print_stats_table("PCA stats by node type", stats_by_node_type)
+
+label_order = TARGET_GROUPS + [MASK_LABEL]
+
+stats_by_label = (
+    node_summary
+    .groupby("label", dropna=False)
+    .agg(
+        total_nodes=("node", "size"),
+        nodes_with_pca=("has_pca", "sum"),
+    )
+)
+
+stats_by_label = stats_by_label.reindex(label_order, fill_value=0).reset_index()
+
+stats_by_label["nodes_without_pca"] = (
+    stats_by_label["total_nodes"] - stats_by_label["nodes_with_pca"]
+)
+
+stats_by_label["category_proportion_of_all_nodes"] = np.where(
+    total_nodes > 0,
+    stats_by_label["total_nodes"] / total_nodes,
+    0.0,
+)
+
+stats_by_label["with_pca_proportion_inside_category"] = np.where(
+    stats_by_label["total_nodes"] > 0,
+    stats_by_label["nodes_with_pca"] / stats_by_label["total_nodes"],
+    0.0,
+)
+
+stats_by_label["without_pca_proportion_inside_category"] = np.where(
+    stats_by_label["total_nodes"] > 0,
+    stats_by_label["nodes_without_pca"] / stats_by_label["total_nodes"],
+    0.0,
+)
+
+print_stats_table("PCA stats by label category", stats_by_label)
+
+print("\nFinal preview:")
+pd_graph_final.head()
