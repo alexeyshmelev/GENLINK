@@ -2744,7 +2744,7 @@ class NullSimulator:
 
 
 class Trainer:
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, train_nodes_fracture=1.0):
         self.data = data
         self.model = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
@@ -2790,6 +2790,7 @@ class Trainer:
         self.remove_saved_model_after_testing = remove_saved_model_after_testing
         self.plot_cm = plot_cm
         self.num_workers = num_workers
+        self.train_nodes_fracture = train_nodes_fracture
             
         self.post = CorrectAndSmooth(num_correction_layers=2, correction_alpha=0.9,
                         num_smoothing_layers=1, smoothing_alpha=0.0001,
@@ -3090,7 +3091,7 @@ class Trainer:
             print(self.model.__class__.__name__)
             criterion = self.loss_fn(weight=self.weight)
             optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-            scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
+            scheduler = StepLR(optimizer, step_size=1, gamma=0.90)
         print(f'Training for data: {self.data.dataset_name}')
         self.max_f1_score_macro = 0
         self.patience_counter = 0
@@ -3110,6 +3111,9 @@ class Trainer:
                     train_dataset = GraphDataset(self.data.array_of_graphs_for_training)
                     train_loader = DataLoader(train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True, collate_fn=collate_fn)
 
+                    actual_training_length = int(self.train_nodes_fracture * len(train_dataset))
+                    actual_training_iterator_counter = 0
+
                     mean_epoch_loss = []
 
                     pbar = tqdm(range(len(train_dataset)), desc='Training samples', disable=self.disable_printing)
@@ -3117,6 +3121,10 @@ class Trainer:
 
                     for train_batch in train_loader:
                         train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+
+                        if actual_training_iterator_counter > actual_training_length:
+                            break
+                        actual_training_iterator_counter += len(train_batch)
 
                         for sample in train_batch:
                             optimizer.zero_grad()
@@ -3127,8 +3135,9 @@ class Trainer:
                             loss.backward()
                             mean_epoch_loss.append(loss.detach().cpu().numpy())
                             optimizer.step()
-                            scheduler.step()
                             pbar.update(1)
+
+                    scheduler.step()
 
                         # assert 0
                         
@@ -3421,7 +3430,7 @@ class TorchGeometricGraphDataset(Dataset):
 
 
 class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with real masks for now with latest updates!!!
-    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, treat_graph_based_features_like_one_hot=False, use_pca_coords_for_graph_based_features=False, use_sparse_adjacency=True, use_amp=False, amp_dtype="bf16"):
+    def __init__(self, data: DataProcessor, model_cls, lr, wd, loss_fn, batch_size, log_dir, patience, num_epochs, feature_type, train_iterations_per_sample, evaluation_steps, weight=None, cuda_device_specified: int = None, masking=False, disable_printing=True, seed=42, save_model_in_ram=False, correct_and_smooth=False, no_mask_class_in_df=True, remove_saved_model_after_testing=False, plot_cm=False, use_class_balance_weight=False, num_workers=0, treat_graph_based_features_like_one_hot=False, use_pca_coords_for_graph_based_features=False, use_sparse_adjacency=True, use_amp=False, amp_dtype="bf16", train_nodes_fracture=1.0):
         self.data = data
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if cuda_device_specified is None else torch.device(f'cuda:{cuda_device_specified}' if torch.cuda.is_available() else 'cpu')
         assert len(self.data.array_of_graphs_for_training) == len(self.data.array_of_graphs_for_validation) == len(self.data.array_of_graphs_for_testing) == 0
@@ -3430,6 +3439,7 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
         self.use_sparse_adjacency = use_sparse_adjacency
         self.use_amp = use_amp
         self.amp_dtype = amp_dtype
+        self.train_nodes_fracture = train_nodes_fracture
 
 
         self.feature_type = feature_type
@@ -3973,7 +3983,7 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
 
         criterion = self.loss_fn(weight=self.weight)
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
-        scheduler = StepLR(optimizer, step_size=50, gamma=0.95)
+        scheduler = StepLR(optimizer, step_size=1, gamma=0.90)
         # scaler = GradScaler()
         scaler = torch.amp.GradScaler(
             "cuda",
@@ -4020,8 +4030,15 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                     pbar = tqdm(range(len(train_dataset)), desc='Training samples', disable=self.disable_printing)
                     pbar.set_postfix({'val_best_score': self.max_f1_score_macro})
 
+                    actual_training_length = int(self.train_nodes_fracture * len(train_dataset))
+                    actual_training_iterator_counter = 0
+
                     for train_batch in train_loader:
                         train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()
+
+                        if actual_training_iterator_counter > actual_training_length:
+                            break
+                        actual_training_iterator_counter += len(train_batch)
 
                         for sample in train_batch:
                             # print('SSSSSSSSSSSSSSSSSSSSSS')
@@ -4084,9 +4101,9 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                                     optimizer.step()
 
                             mean_epoch_loss.append(loss.detach().cpu().numpy())
-                            optimizer.step()
-                            scheduler.step()
                             pbar.update(1)
+
+                    scheduler.step()
 
 
                     # for j, data_curr in enumerate(pbar):
@@ -4112,6 +4129,7 @@ class TorchGeometricTrainer: # this trainer is only suitable for CR dataset with
                     #     print(classification_report(y_true, y_pred))
                     
             elif self.feature_type == 'graph_based':
+                assert 0
                 if self.masking:
                     for train_batch in train_loader:
                         train_batch = train_batch.to(self.device, non_blocking=True).to_data_list()

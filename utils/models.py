@@ -317,6 +317,35 @@ class GL_TAGConv_3l_512h_w_k3_gnorm(torch.nn.Module):
         x = self.n2(x)
         x = self.conv3(x, edge_index, edge_attr)
         return x
+
+
+class GL_TAGConv_3l_512h_w_k3_gnorm_ram_optimized(torch.nn.Module):
+    def __init__(self, data):
+        super(GL_TAGConv_3l_512h_w_k3_gnorm_ram_optimized, self).__init__()
+        self.conv1 = TAGConv(int(data.num_features), 512)
+        self.conv2 = TAGConv(512, 512)
+        self.conv3 = TAGConv(512, int(data.num_classes))
+        self.n1 = GraphNorm(512)
+        self.n2 = GraphNorm(512)
+
+    def forward(self, data):
+        x = data.x.float()
+        edge_input, edge_weight = _gnnm_get_tagconv_inputs(data)
+
+        if edge_weight is None:
+            x = F.elu(self.conv1(x, edge_input))
+            x = self.n1(x)
+            x = F.elu(self.conv2(x, edge_input))
+            x = self.n2(x)
+            x = self.conv3(x, edge_input)
+        else:
+            x = F.elu(self.conv1(x, edge_input, edge_weight))
+            x = self.n1(x)
+            x = F.elu(self.conv2(x, edge_input, edge_weight))
+            x = self.n2(x)
+            x = self.conv3(x, edge_input, edge_weight)
+
+        return x
     
 
 class GL_TAGConv_3l_4h_w_k3_gnorm(torch.nn.Module):

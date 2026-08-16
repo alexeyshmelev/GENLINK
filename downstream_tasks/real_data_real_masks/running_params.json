@@ -2,7 +2,7 @@
     "train_size":0.6,
     "valid_size":0.2, 
     "test_size":0.2,
-    "num_splits":1,
+    "num_splits":10,
     "splits_save_dir": null, 
     "mask_size": null,
     "sub_train_size": null, 
@@ -12,7 +12,7 @@
     "wd":[0.0001],
     "loss":["CrossEntropyLoss"],
     "batch_size":1,
-    "log_dir":"/disk/10tb/home/shmelev/GENLINK/downstream_tasks/runs/real_data_real_masks",
+    "log_dir":"/home/jovyan/GENLINK/downstream_tasks/runs/real_data_real_masks",
     "patience":[10],
     "num_epochs":[10],
     "train_iterations_per_sample":[1000],
@@ -28,11 +28,13 @@
     "save_dataset_stats":false,
     "no_mask_class_in_df":false,
     "make_ram_efficient_dataset":true,
-    "num_workers": 0,
+    "num_workers": 8,
     "use_torch_geometric_trainer": true,
     "treat_graph_based_features_like_one_hot": true,
     "use_sparse_adjacency": true,
     "use_amp": false,
     "amp_dtype": "bf16",
-    "use_pca_coords_for_graph_based_features": true
+    "use_pca_coords_for_graph_based_features": true,
+    "use_pca_coords_for_one_hot_features": true,
+    "train_nodes_fracture": 1.0
 }

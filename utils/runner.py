@@ -160,6 +160,7 @@ class Runner:
                                 remove_saved_model_after_testing=True,
                                 plot_cm=self.running_params['plot_cm'],
                                 use_class_balance_weight=self.running_params['use_class_balance_weight'],
+                                train_nodes_fracture=self.running_params['train_nodes_fracture'],
                                 # use_sparse_adjacency=self.running_params['use_sparse_adjacency'],
                                 # use_amp=self.running_params['use_amp'],
                                 # amp_dtype=self.running_params['amp_dtype'],

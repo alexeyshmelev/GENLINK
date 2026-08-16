@@ -18,6 +18,10 @@ nxl.setLevel(logging.DEBUG)
 print('Your version of networkx: ', nx.__version__)
 print('Your supported networkx backends: ', nx.betweenness_centrality.backends)
 
+import os
+from setproctitle import setproctitle
+
+setproctitle(os.environ.get("PROCESS_NAME", "torchrun --master_addr 127.0.0.1 --nproc_per_node 7 segmentation/train.py --config segmentation/configs/moderngena_base_gpt.json"))
 
 
 if __name__ == '__main__':
