@@ -34,7 +34,7 @@
     "use_sparse_adjacency": true,
     "use_amp": false,
     "amp_dtype": "bf16",
-    "use_pca_coords_for_graph_based_features": true,
-    "use_pca_coords_for_one_hot_features": true,
+    "use_pca_coords_for_graph_based_features": false,
+    "use_pca_coords_for_one_hot_features": false,
     "train_nodes_fracture": 1.0
 }
