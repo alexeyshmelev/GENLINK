@@ -28,13 +28,13 @@
     "save_dataset_stats":false,
     "no_mask_class_in_df":false,
     "make_ram_efficient_dataset":true,
-    "num_workers": 3,
+    "num_workers": 8,
     "use_torch_geometric_trainer": true,
     "treat_graph_based_features_like_one_hot": true,
     "use_sparse_adjacency": true,
     "use_amp": false,
     "amp_dtype": "bf16",
-    "use_pca_coords_for_graph_based_features": false,
-    "use_pca_coords_for_one_hot_features": false,
+    "use_pca_coords_for_graph_based_features": true,
+    "use_pca_coords_for_one_hot_features": true,
     "train_nodes_fracture": 1.0
 }
